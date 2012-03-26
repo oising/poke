@@ -1,6 +1,7 @@
 ﻿ipmo poke -force
 
 $VerbosePreference = "Continue"
+$error.Clear()
 
 function Assert-True {
     param(
@@ -29,7 +30,7 @@ function Assert-True {
         $ErrorActionPreference = $eap
     }
     write-host -ForegroundColor Red "[FAIL] " -NoNewline
-    write-host $reason
+    write-host "Reason: '$reason'"
 }
 
 #
@@ -56,14 +57,14 @@ assert-true {
 assert-true {
     $sb = new-object System.Text.StringBuilder
     $proxy = peek $sb
-    $proxy.append([system.int16]42) > $null
+    $proxy.append(42) > $null
     $proxy.length -eq 2
-} -name "instance method"
+} -name "instance method with overloads"
 
 assert-true {
     $proxy = peek system.string
     $s = $proxy.format("hello, {0}", [object[]]@("world"))
-    $s -eq "hello, world."
-} -name "static method"
+    $s -eq "hello, world"
+} -name "static method with overloads"
 
 $VerbosePreference = "SilentlyContinue"
