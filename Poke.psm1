@@ -22,11 +22,15 @@ $initializer = {
         # type
         Write-Verbose "`$baseObject is a Type"
         $methodInfos = $baseobject.getmethods($flags)|?{!$_.isspecialname}
+        $baseType = $baseObject
     } else {
         # instance
         Write-Verbose "`$baseObject is an instance"
-        $methodInfos = $baseObject.GetType().getmethods($flags)|?{!$_.isspecialname}        
+        $methodInfos = $baseObject.GetType().getmethods($flags)|?{!$_.isspecialname}
+        $baseType = $baseObject.GetType()
     }
+
+    # [string].getmethod("Format", $binding, $null, $a, $null)
 
     foreach ($method in @($methodInfos|sort name -unique)) {
             
@@ -41,15 +45,23 @@ $initializer = {
             param();
                 
             write-verbose 'called $methodName'
-                
+            [reflection.bindingflags]`$binding = '$flags'
+
             try {
-                if (@(`$self.getmethods([reflection.bindingflags]'$flags')|? name -eq '$methodname').count -gt 1) {
+                if ((`$overloads = @(`$baseType.getmethods(`$binding)|? name -eq '$methodname')).count -gt 1) {
                     write-verbose 'self $self ; flags: $flags ; finding best fit overload'
-                    write-warning 'multiple overloads. not implemented'
+                    #write-warning ""multiple overloads (`$(`$overloads.count))""
+                    `$types = @(`$args|%{`$_.gettype()})
+                    `$method = `$baseType.getmethod('$methodname', `$binding, `$null, `$types, `$null)
+                    if (-not `$method) {
+                        write-warning ""Could not find best fit overload for `$(`$types -join ',').""
+                        throw
+                    }
                 } else {
                     write-verbose 'single method; no overloads'
-                    `$method.invoke(`$self, '$flags', `$null, `$args, `$null)
-                }                    
+                }
+                # invoke
+                `$method.invoke(`$self, `$binding, `$null, `$args, `$null)                                    
             } catch {
                 if (`$_.exception.innerexception -is [Reflection.TargetParameterCountException]) {
                         
@@ -103,10 +115,6 @@ function New-TypeProxy {
             param([scriptblock]$block)
             . $ExecutionContext.SessionState.Module.NewBoundScriptBlock($block) @args
         }
-
-        # skip accessors
-        #$methods = $type.GetMethods("Public,NonPublic,Static")|?{!$_.isspecialname}    
-        #$properties = $type.GetProperties("Public,NonPublic,Static")
 
         function __CreateInstance {
             write-verbose "Type is $type ; `$args count is $($args.count)"
