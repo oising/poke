@@ -9,8 +9,7 @@
 @{
 
 # Script module or binary module file associated with this manifest
-# RootModule = ''
-ModuleToProcess = 'Poke.psm1'
+RootModule = 'Poke.psm1'
 
 # Version number of this module.
 ModuleVersion = '1.0'
@@ -31,7 +30,7 @@ Copyright = '(c) 2012 o.grehan. All rights reserved.'
 # Description = ''
 
 # Minimum version of the Windows PowerShell engine required by this module
-PowerShellVersion = '2.0'
+PowerShellVersion = '3.0'
 
 # Name of the Windows PowerShell host required by this module
 # PowerShellHostName = ''

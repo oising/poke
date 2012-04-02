@@ -503,5 +503,6 @@ Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberTy
     Get-Delegate $this $delegate
 }
 
+
 new-alias -Name peek -Value New-ObjectProxy -Force
 Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate
