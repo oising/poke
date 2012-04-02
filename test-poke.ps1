@@ -1,6 +1,6 @@
 ﻿ipmo poke -force
 
-$VerbosePreference = "Continue"
+#$VerbosePreference = "Continue"
 $error.Clear()
 
 function Assert-True {
