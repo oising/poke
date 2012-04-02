@@ -7,6 +7,9 @@
 
 Set-StrictMode -Version Latest
 
+$adapterType = [psobject].assembly.gettype("System.Management.Automation.DotNetAdapter")
+$getMethodDefinition = $adapterType.getmethod("GetMethodInfoOverloadDefinition", [reflection.bindingflags]"static,nonpublic")
+
 # method generator lambda
 $initializer = {
     param(
@@ -35,7 +38,7 @@ $initializer = {
     foreach ($method in @($methodInfos|sort name -unique)) {
             
         $methodName = $method.name
-        $returnType = $method.returnType
+        $returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType)
 
         write-verbose "Creating method $returntype $methodname`(...`)"
             
@@ -51,7 +54,7 @@ $initializer = {
                 if ((`$overloads = @(`$baseType.getmethods(`$binding)|? name -eq '$methodname')).count -gt 1) {
                     write-verbose 'self $self ; flags: $flags ; finding best fit overload'
                     #write-warning ""multiple overloads (`$(`$overloads.count))""
-                    `$types = @(`$args|%{`$_.gettype()})
+                    `$types = [type]::gettypearray(`$args)  #@(`$args|%{`$_.gettype()})
                     `$method = `$baseType.getmethod('$methodname', `$binding, `$null, `$types, `$null)
                     if (-not `$method) {
                         write-warning ""Could not find best fit overload for `$(`$types -join ',').""
@@ -299,9 +302,13 @@ function Add-Fields {
 
     # add fields
     foreach ($field in ($fields|sort name)) {
+        
+        # clean up type string for generics and accelerated types
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType)
+
         # close over field and instance vars but insert literal for fieldtype
         $getter = [scriptblock]::create(
-            "[outputtype('$($field.FieldType)')]param(); `$field.GetValue(`$self)").GetNewClosure()
+            "[outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
         
         # declared readonly?
         if ($field.IsInitOnly) {
@@ -339,9 +346,13 @@ function Add-Properties {
 
     # add properties
     foreach ($property in ($properties|sort name)) {
+
+        # clean up type string for generics and accelerated types
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType)
+
         # property getter
         $getter = [scriptblock]::create(
-            "[outputtype('$($property.PropertyType)')]param(); `$property.GetValue(`$self)").GetNewClosure()
+            "[outputtype('$outputType')]param(); `$property.GetValue(`$self)").GetNewClosure()
         
         # i don't account for setter-only properties
         if (-not $property.CanWrite) {
@@ -383,6 +394,71 @@ function Find-Type {
     $matches
 }
 
+function Get-Delegate {
+    [CmdletBinding(DefaultParameterSet="FromDelegate")]
+    param(
+        [parameter(position=0, mandatory=$true, valuefrompipeline=$true)]        
+        [system.management.automation.psmethod]$Method,
+
+        [parameter(position=1, mandatory=$true, parametersetname="FromDelegate")]
+        [validatenotnull()]
+        [validatescript({ ([delegate].isassignablefrom($_)) })]
+        [type]$Delegate,
+
+        [parameter(position=1, mandatory=$true, valuefromremainingarguments=$true, parametersetname="FromArguments")]
+        [validatenotnull()]
+        [allowemptycollection()]
+        [Alias("args")]
+        [type[]]$Argument
+    )
+    
+    $finder = [type].getmethod("GetMethodImpl", [reflection.bindingflags]"NonPublic,Instance")
+    
+    $base = $method.GetType().GetField("baseObject","nonpublic,instance").GetValue($method)    
+    
+    if ($base -is [type]) {
+        $flags = "Public,Static"
+    } else {
+        $flags = "Public,Instance"
+    }
+
+    if ($Delegate -eq [action]) {
+        $sig = @() # no parameters
+    } elseif ($Delegate.IsGenericType) {
+        $name = $Delegate.Name
+        if ($name.StartsWith("Action``")) {
+            $sig = @($delegate.GetGenericArguments())
+        } elseif ($name.StartsWith("Func``")) {
+            $sig = @($delegate.GetGenericArguments())
+            $sig = $sig[0..$($sig.length - 2)] # trim last element (TReturn)
+        } else {
+            throw "Unsupported delegate type: Use Action<> or Func<>."
+        }
+    }
+
+    $finder.invoke(
+        $base,
+         @(
+              $method.Name,
+              [reflection.bindingflags]$flags,
+              $null,
+              $null,
+              [type[]]$sig,
+              $null)
+         ).createdelegate($Delegate)
+}
+
+function Get-MethodDefinition {
+    param(
+        [string]$Name,
+        [reflection.methodbase]$MethodBase
+        #[int]$ParametersToIgnore
+    )
+
+    # internal static string GetMethodInfoOverloadDefinition(string memberName, MethodBase methodEntry, int parametersToIgnore)
+    $getMethodDefinition.Invoke($adapterType, $name, $methodbase, 0)
+}
+
 function New-ObjectProxy {
     [cmdletbinding(defaultparametersetname="typeName")]
     param(                
@@ -416,5 +492,16 @@ function New-ObjectProxy {
     }
 }
 
+Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberType ScriptMethod -MemberName CreateDelegate -Value {
+    param(        
+        [parameter(position=0, mandatory=$true)]
+        [validatenotnull()]
+        [validatescript({ ([delegate].isassignablefrom($_)) })]
+        [type]$Delegate
+    )
+
+    Get-Delegate $this $delegate
+}
+
 new-alias -Name peek -Value New-ObjectProxy -Force
-Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy
+Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate
