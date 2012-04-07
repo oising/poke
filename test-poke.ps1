@@ -14,7 +14,7 @@ function Assert-True {
         [string]$Name = "Assert-True"
     )    
     $eap = $ErrorActionPreference
-    Write-Host -NoNewline "Assert-True [$Name] "
+    Write-Host -NoNewline "Assert-True [ $Name ] "
     try {
         $erroractionpreference = "stop"
         if ((& $script) -eq $true) {
@@ -66,5 +66,30 @@ assert-true {
     $s = $proxy.format("hello, {0}", [object[]]@("world"))
     $s -eq "hello, world"
 } -name "static method with overloads"
+
+assert-true {
+    $delegate = [string]::format | Get-Delegate -Delegate 'func[string,object,string]'
+    $delegate.invoke("hello, {0}", "world") -eq "hello, world"
+} -name "[string]::format | get-delegate -delegate 'func[string,object,string]'"
+
+assert-true {
+    $delegate = [console]::writeline | Get-Delegate -Delegate 'action[int]'
+    $delegate -is [action[int]]
+} -name "[console]::writeline | get-delegate -delegate 'action[int]'"
+
+assert-true {
+    $delegate = [string]::format | Get-Delegate string,string
+    $delegate.invoke("hello, {0}", "world") -eq "hello, world"
+} -name "[string]::format | get-delegate string,string"
+
+assert-true {
+    $delegate = [console]::beep | Get-Delegate @()
+    $delegate -is [action]
+} -name "[console]::beep | get-delegate @()"
+
+assert-true {
+    $delegate = [console]::beep | Get-Delegate -DelegateType action
+    $delegate -is [action]
+} -name "[console]::beep | Get-Delegate -DelegateType action"
 
 $VerbosePreference = "SilentlyContinue"
