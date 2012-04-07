@@ -395,24 +395,38 @@ function Find-Type {
 }
 
 function Get-Delegate {
-    [CmdletBinding(DefaultParameterSet="FromDelegate")]
+<#
+.SYNOPSIS
+Foo bar
+
+.DESCRIPTION
+Foo bar description
+
+.PARAMETER Method
+Method parameter
+
+.PARAMETER ParameterType
+ParameterType parameter
+
+.PARAMETER Delegate
+Parameter
+#>
+    [CmdletBinding(DefaultParameterSetName="FromParameterType")]
     param(
-        [parameter(position=0, mandatory=$true, valuefrompipeline=$true)]        
+        [parameter(mandatory=$true, valuefrompipeline=$true)]
         [system.management.automation.psmethod]$Method,
 
-        [parameter(position=1, mandatory=$true, parametersetname="FromDelegate")]
-        [validatenotnull()]
-        [validatescript({ ([delegate].isassignablefrom($_)) })]
-        [type]$Delegate,
-
-        [parameter(position=1, mandatory=$true, valuefromremainingarguments=$true, parametersetname="FromArguments")]
+        [parameter(position=0, mandatory=$true, valuefromremainingarguments=$true, parametersetname="FromParameterType")]
         [validatenotnull()]
         [allowemptycollection()]
-        [Alias("args")]
-        [type[]]$Argument
-    )
-    
-    $finder = [type].getmethod("GetMethodImpl", [reflection.bindingflags]"NonPublic,Instance")
+        [Alias("types")]
+        [type[]]$ParameterType,
+
+        [parameter(mandatory=$true, parametersetname="FromDelegate")]
+        [validatenotnull()]
+        [validatescript({ ([delegate].isassignablefrom($_)) })]
+        [type]$DelegateType
+    )       
     
     $base = $method.GetType().GetField("baseObject","nonpublic,instance").GetValue($method)    
     
@@ -422,30 +436,80 @@ function Get-Delegate {
         $flags = "Public,Instance"
     }
 
-    if ($Delegate -eq [action]) {
-        $sig = @() # no parameters
-    } elseif ($Delegate.IsGenericType) {
-        $name = $Delegate.Name
-        if ($name.StartsWith("Action``")) {
-            $sig = @($delegate.GetGenericArguments())
-        } elseif ($name.StartsWith("Func``")) {
-            $sig = @($delegate.GetGenericArguments())
-            $sig = $sig[0..$($sig.length - 2)] # trim last element (TReturn)
-        } else {
-            throw "Unsupported delegate type: Use Action<> or Func<>."
+    if ($pscmdlet.ParameterSetName -eq "FromDelegate") {
+        write-verbose "Inferring from delegate."
+
+        if ($DelegateType -eq [action]) {
+            # void action        
+            $ParameterType = [type[]]@()
+        
+        } elseif ($DelegateType.IsGenericType) {
+            # get type name
+            $name = $DelegateType.Name
+
+            # is it [action[]] ?
+            if ($name.StartsWith("Action``")) {
+    
+                $ParameterType = @($DelegateType.GetGenericArguments())    
+            
+            } elseif ($name.StartsWith("Func``")) {
+    
+                # it's a [func[]]
+                $ParameterType = @($DelegateType.GetGenericArguments())
+                $ParameterType = $ParameterType[0..$($ParameterType.length - 2)] # trim last element (TReturn)
+            } else {
+                throw "Unsupported delegate type: Use Action<> or Func<>."
+            }
         }
     }
 
-    $finder.invoke(
+    $finder = [type].getmethod("GetMethodImpl", [reflection.bindingflags]"NonPublic,Instance")
+
+    [reflection.methodinfo]$methodInfo = $finder.invoke(
         $base,
          @(
               $method.Name,
               [reflection.bindingflags]$flags,
               $null,
               $null,
-              [type[]]$sig,
-              $null)
-         ).createdelegate($Delegate)
+              [type[]]$ParameterType,
+              $null
+         )
+    ) # end invoke
+
+    if (-not $methodInfo) {
+        write-warning "Could not find matching method signature."
+    } else {
+        
+        # it's important here to use the actual MethodInfo's parameter types,
+        # not the desired types ($parametertype) because they may not match,
+        # e.g. asked for method(int) but match is method(object).
+
+        if ($pscmdlet.ParameterSetName -eq "FromParameterType") {            
+                    
+
+            # need to create corresponding [action[]] or [func[]]
+            if ($methodInfo.ReturnType -eq [void]) {
+                if ($ParameterType.Length -eq 0) {
+                    $DelegateType = [action]
+                } else {
+                    # action<...>
+                    
+                    # replace desired with matching overload parameter types
+                    $ParameterType = $methodInfo.GetParameters().ParameterType
+                    $DelegateType = ("action[{0}]" -f ($ParameterType -join ",")) -as [type]
+                }
+            } else {
+                # func<...>
+
+                # replace desired with matching overload parameter types
+                $ParameterType = $methodInfo.GetParameters().ParameterType
+                $DelegateType = ("func[{0}]" -f (($ParameterType + $methodInfo.ReflectedType) -join ",")) -as [type]
+            }                        
+        }
+        Write-Verbose $DelegateType
+        $methodInfo.createdelegate($DelegateType)
+    }
 }
 
 function Get-MethodDefinition {
@@ -497,12 +561,11 @@ Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberTy
         [parameter(position=0, mandatory=$true)]
         [validatenotnull()]
         [validatescript({ ([delegate].isassignablefrom($_)) })]
-        [type]$Delegate
+        [type]$DelegateType
     )
 
-    Get-Delegate $this $delegate
+    $this | Get-Delegate -Delegate $DelegateType
 }
-
 
 new-alias -Name peek -Value New-ObjectProxy -Force
 Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate
