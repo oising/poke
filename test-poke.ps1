@@ -67,6 +67,11 @@ assert-true {
     $s -eq "hello, world"
 } -name "static method with overloads"
 
+
+#
+# static methods
+#
+
 assert-true {
     $delegate = [string]::format | Get-Delegate -Delegate 'func[string,object,string]'
     $delegate.invoke("hello, {0}", "world") -eq "hello, world"
@@ -91,5 +96,31 @@ assert-true {
     $delegate = [console]::beep | Get-Delegate -DelegateType action
     $delegate -is [action]
 } -name "[console]::beep | Get-Delegate -DelegateType action"
+
+assert-true {
+    $delegate = [string]::IsNullOrEmpty | get-delegate
+    $delegate -is [func[string,bool]]
+} -name "[string]::IsNullOrEmpty | get-delegate # single overload"
+
+assert-true {
+    $delegate = [string]::IsNullOrEmpty | get-delegate string
+    $delegate -is [func[string,bool]]
+} -name "[string]::IsNullOrEmpty | get-delegate string # single overload"
+
+#
+# instance methods
+#
+
+assert-true {
+    $sb = new-object text.stringbuilder
+    $delegate = $sb.Append | get-delegate string
+    $delegate -is [System.Func[string,System.Text.StringBuilder]]
+} -name "`$sb.Append | get-delegate string"
+
+assert-true {
+    $sb = new-object text.stringbuilder
+    $delegate = $sb.AppendFormat | get-delegate string, int, int
+    $delegate -is [System.Func[string,object,object,System.Text.StringBuilder]]
+} -name "`$sb.AppendFormat | get-delegate string, int, int"
 
 $VerbosePreference = "SilentlyContinue"
