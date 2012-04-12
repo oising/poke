@@ -124,3 +124,6 @@ assert-true {
 } -name "`$sb.AppendFormat | get-delegate string, int, int"
 
 $VerbosePreference = "SilentlyContinue"
+
+$s = peek system.string
+$s | gm

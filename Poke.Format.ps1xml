@@ -1,0 +1,50 @@
+﻿<Configuration>
+    <ViewDefinitions>
+        <View>
+            <Name>Microsoft.PowerShell.Commands.MemberDefinition</Name>
+            <ViewSelectedBy>
+                <TypeName>Microsoft.PowerShell.Commands.MemberDefinition</TypeName>
+            </ViewSelectedBy>
+            <GroupBy>
+                <PropertyName>TypeName</PropertyName> 
+            </GroupBy>
+
+            <TableControl>
+                <AutoSize/>
+                <TableHeaders>
+                    <TableColumnHeader>
+                        <Label>Name</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Modifier</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>MemberType</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Definition</Label>
+                    </TableColumnHeader>
+                </TableHeaders>
+                <TableRowEntries>
+                    <TableRowEntry>
+                        <TableColumnItems>
+                            <TableColumnItem>
+                                <PropertyName>Name</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <!-- ETS property added by Update-TypeData in poke.psm1 -->
+                                <PropertyName>Modifier</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>MemberType</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>Definition</PropertyName>
+                            </TableColumnItem>
+                        </TableColumnItems>
+                    </TableRowEntry>
+                 </TableRowEntries>
+            </TableControl>
+        </View>
+    </ViewDefinitions>
+</Configuration>
