@@ -9,8 +9,41 @@ Set-StrictMode -Version Latest
 
 $adapterType = [psobject].assembly.gettype("System.Management.Automation.DotNetAdapter")
 $getMethodDefinition = $adapterType.getmethod("GetMethodInfoOverloadDefinition", [reflection.bindingflags]"static,nonpublic")
+$proxyTable = @{}
 
+$formatHelperFunctions = {
+    function Get-MemberDefinition {
+        param(
+            [string]$Name,
+            [reflection.methodbase]$MethodBase
+            #[int]$ParametersToIgnore
+        )
+
+        # internal static string GetMethodInfoOverloadDefinition(string memberName, MethodBase methodEntry, int parametersToIgnore)
+        $getMethodDefinition.Invoke($adapterType, $name, $methodbase, 0)
+    }
+
+    function Get-MemberModifier {
+        "Public"
+    }
+
+    function Get-MemberType {
+        param(
+            [Microsoft.PowerShell.Commands.MemberDefinition]$Member
+        )
+
+        # don't want to recursive trigger ETS so use psbase
+        $memberType = $member.psbase.MemberType
+        $memberType
+    }
+}
+
+############################################
+#
 # method generator lambda
+#
+############################################
+
 $initializer = {
     param(
         [Parameter(mandatory=$true, position=0)]
@@ -18,25 +51,43 @@ $initializer = {
         $baseObject,
 
         [Parameter(mandatory=$true, position=1)]
-        [reflection.bindingflags]$flags
+        [reflection.bindingflags]$flags,
+
+        [switch]$IncludeCompilerGenerated,
+
+        [switch]$IncludeSpecialName
     )
+
+    write-verbose "Method initializer."
+
+    filter Limit-SpecialMember {
+        if (-not ($_.isspecialname -or $_.GetCustomAttributes([System.Runtime.CompilerServices.CompilerGeneratedAttribute], $false).count)) {
+            $_
+        } else {
+            if ($_.isspecialname) {
+                Write-Verbose "skipping special member $_"
+            } else {
+                Write-Verbose "skipping compiler generated $_"
+            }
+        }
+    }
 
     if ($baseObject.gettype().Name -eq "RuntimeType") {
         # type
         Write-Verbose "`$baseObject is a Type"
-        $methodInfos = $baseobject.getmethods($flags)|?{!$_.isspecialname}
+        $methodInfos = $baseobject.getmethods($flags)| Limit-SpecialMember
         $baseType = $baseObject
     } else {
         # instance
         Write-Verbose "`$baseObject is an instance"
-        $methodInfos = $baseObject.GetType().getmethods($flags)|?{!$_.isspecialname}
+        $methodInfos = $baseObject.GetType().getmethods($flags) | Limit-SpecialMember
         $baseType = $baseObject.GetType()
     }
 
     # [string].getmethod("Format", $binding, $null, $a, $null)
 
     foreach ($method in @($methodInfos|sort name -unique)) {
-            
+
         $methodName = $method.name
         $returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType)
 
@@ -54,7 +105,7 @@ $initializer = {
                 if ((`$overloads = @(`$baseType.getmethods(`$binding)|? name -eq '$methodname')).count -gt 1) {
                     write-verbose 'self $self ; flags: $flags ; finding best fit overload'
                     #write-warning ""multiple overloads (`$(`$overloads.count))""
-                    `$types = [type]::gettypearray(`$args)  #@(`$args|%{`$_.gettype()})
+                    `$types = [type]::gettypearray(`$args)
                     `$method = `$baseType.getmethod('$methodname', `$binding, `$null, `$types, `$null)
                     if (-not `$method) {
                         write-warning ""Could not find best fit overload for `$(`$types -join ',').""
@@ -70,20 +121,31 @@ $initializer = {
                         
                     write-warning ""Could not find matching overload with `$(`$args.count) parameter(s).""
                     # dump overloads (public methods only?)
-                    `$self.$methodname
-                        
+                    #`$self.'$methodname'
+
                 } else {
                     # error is from invocation target, rethrow
                     throw
                 }
             }")).GetNewClosure()
             
-        $definition.description = "Method $methodName"
+        # isfamily: protected
+        # isfamilyORassembly: protected internal
+        # isassembly: internal
+        # isprivate: private
+        
+        $definition.description = "..." # todo: store modifiers
         
         export-modulemember $methodname
         #$methodName
     }
 }
+
+############################################
+#
+# Type Proxy
+#
+############################################
 
 function New-TypeProxy {
 <#
@@ -106,10 +168,11 @@ function New-TypeProxy {
     }
         
     # Create TypeProxy
-    $typeProxy = new-module -ascustomobject -name "[${typeName}]" {
+    $proxy = new-module -ascustomobject -name "Pokeable.System.RuntimeType#$($type.fullname)" {
         param(
             [type]$type,
-            [scriptblock]$initializer
+            [scriptblock]$initializer,
+            [scriptblock]$formatHelperFunctions
         )
          
         Set-StrictMode -Version latest
@@ -150,7 +213,10 @@ function New-TypeProxy {
         # define methods
         $self = $type
         . apply $initializer $type "Public,NonPublic,Static,DeclaredOnly"
-                
+         
+        # bind format helper functions to this module's scope
+        . apply $formatHelperFunctions        
+
         function __GetBaseObject {
             $type
         }
@@ -160,26 +226,35 @@ function New-TypeProxy {
         }
         
         function ToString {
-            "[TypeProxy#$($type.FullName)]"
-        }
-        
+            "Pokeable.System.RuntimeType#$($type.fullname)"
+        }        
+
         export-modulemember __CreateInstance, __GetBaseObject, __GetModuleInfo, ToString
         
-    } -args $type, $initializer
+    } -args $type, $initializer, $formatHelperFunctions
     
-    if ($typeProxy) {
+    if ($proxy) {
         
         # TODO: fix up overloads
     
-        $typeProxy.psobject.typenames.insert(0, "Pokeable.Object")
-        $typeProxy.psobject.typenames.insert(0, "Pokeable.System.RuntimeType#$($type.fullname)")
-        $typeProxy
+        $proxy.psobject.typenames.insert(0, "Pokeable.Object")
+        $proxy.psobject.typenames.insert(0, "Pokeable.System.RuntimeType#$($type.fullname)")
 
         # TODO: create field/property initializer lambdas
-        Add-fields $typeProxy "Public,NonPublic,DeclaredOnly,Static" > $null        
-        Add-properties $typeProxy "Public,NonPublic,DeclaredOnly,Static" > $null
+        Add-fields $proxy "Public,NonPublic,DeclaredOnly,Static" > $null        
+        Add-properties $proxy "Public,NonPublic,DeclaredOnly,Static" > $null
+
+        $proxyTable[$proxy.tostring()] = $proxy.__GetModuleInfo()
+
+        $proxy
     }
 }    
+
+############################################
+#
+#  Instance Proxy
+#
+############################################
 
 function New-InstanceProxy {
 <#
@@ -201,11 +276,12 @@ function New-InstanceProxy {
     
     #$methods = $type.GetMethods("Public,NonPublic,DeclaredOnly,Instance")|?{!$_.isspecialname}
         
-    $wrapped = new-module -ascustomobject -name "$($type.Name)#$instanceId" -verbose {
+    $proxy = new-module -ascustomobject -name "Pokeable.$($type.fullname)#$instanceId" -verbose {
         param(
             $self,
             $instanceId,
-            $initializer
+            [scriptblock]$initializer,
+            [scriptblock]$formatHelperFunctions
         )
         
         Set-StrictMode -Version latest
@@ -218,7 +294,11 @@ function New-InstanceProxy {
         $type = $self.gettype()
         write-verbose "Created an instance of $type"
 
+        # define methods
         . apply $initializer $self "Public,NonPublic,DeclaredOnly,Instance"
+
+        # bind format helper functions to this module's scope
+        . apply $formatHelperFunctions
 
         function __GetModuleInfo {
             $ExecutionContext.SessionState.Module
@@ -234,9 +314,9 @@ function New-InstanceProxy {
         }
         
         function ToString() {
-            "Pokeable.$($type.FullName)#$instanceId"
+            "Pokeable.$($type.fullname)#$instanceId"
         }
-        
+
         export-modulemember __GetBaseObject, __GetModuleInfo, ToString #, __Help
 
         # register dispose handler on module remove
@@ -249,11 +329,11 @@ function New-InstanceProxy {
                 $self.Dispose()
             }
         }
-    } -args $instance, $instanceId, $initializer
+    } -args $instance, $instanceId, $initializer, $formatHelperFunctions
     
-    if ($wrapped) {
+    if ($proxy) {
     
-        $psobject = $wrapped.psobject
+        $psobject = $proxy.psobject
         
         try {
             <# fix up overload definitions ;-)
@@ -268,16 +348,24 @@ function New-InstanceProxy {
             write-warning "Failed to fix up overloads: $_"        
         }
         
-        Add-fields $wrapped "Public,NonPublic,DeclaredOnly,Instance" > $null
+        Add-fields $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null
         
-        Add-properties $wrapped "Public,NonPublic,DeclaredOnly,Instance" > $null
+        Add-properties $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null
 
         $psobject.typenames.insert(0, "Pokeable.Object")
         $psobject.typenames.insert(0, "Pokeable.$($type.fullname)#$instanceId")
-        
-        $wrapped
+
+        $proxyTable[$proxy.tostring()] = $proxy.__GetModuleInfo()
+                
+        $proxy
     }
 }
+
+############################################
+#
+#  Add Fields
+#
+############################################
 
 function Add-Fields {
     param(
@@ -323,6 +411,12 @@ function Add-Fields {
     }
 }
 
+############################################
+#
+#  Add Properties
+#
+############################################
+
 function Add-Properties {
     param(
         [Parameter(mandatory=$true, position=0)]
@@ -367,6 +461,12 @@ function Add-Properties {
     }
 }
 
+############################################
+#
+#  Find Type
+#
+############################################
+
 function Find-Type {
     param(
         [string]$TypeName,
@@ -393,6 +493,12 @@ function Find-Type {
         
     $matches
 }
+
+############################################
+#
+#  Get Delegate
+#
+############################################
 
 function Get-Delegate {
 <#
@@ -577,16 +683,11 @@ For a method with no overloads, we will choose the default method and create a c
     }
 }
 
-function Get-MethodDefinition {
-    param(
-        [string]$Name,
-        [reflection.methodbase]$MethodBase
-        #[int]$ParametersToIgnore
-    )
-
-    # internal static string GetMethodInfoOverloadDefinition(string memberName, MethodBase methodEntry, int parametersToIgnore)
-    $getMethodDefinition.Invoke($adapterType, $name, $methodbase, 0)
-}
+############################################
+#
+#  New Object Proxy (peek)
+#
+############################################
 
 function New-ObjectProxy {
     [cmdletbinding(defaultparametersetname="typeName")]
@@ -621,6 +722,35 @@ function New-ObjectProxy {
     }
 }
 
+function ConvertTo-CliXml {
+    param(
+        [parameter(position=0,mandatory=$true,valuefrompipeline=$true)]
+        [validatenotnull()]
+        [psobject]$object
+    )
+    begin {
+        $type = [psobject].assembly.gettype("System.Management.Automation.Serializer")
+        $ctor = $type.getconstructor("instance,nonpublic", $null, @([xml.xmlwriter]), $null)
+        $sw = new-object io.stringwriter
+        $xw = new-object xml.xmltextwriter $sw
+        $serializer = $ctor.invoke($xw)
+        $method = $type.getmethod("Serialize", "nonpublic,instance", $null, [type[]]@([object]), $null)
+        $done = $type.getmethod("Done", [reflection.bindingflags]"nonpublic,instance")
+    }
+    process {
+        try {
+            $method.invoke($serializer, $object)
+        } catch {
+            write-warning "Could not serialize $($object.gettype()): $_"
+        }
+    }
+    end {    
+        $done.invoke($serializer, @())
+        $sw.ToString()
+    }
+}
+
+<#
 Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberType ScriptMethod -MemberName CreateDelegate -Value {
     param(        
         [parameter(position=0, mandatory=$true)]
@@ -631,6 +761,26 @@ Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberTy
 
     $this | Get-Delegate -Delegate $DelegateType
 }
+#>
+
+function Invoke-FormatHelper {
+    param(
+        [Microsoft.PowerShell.Commands.MemberDefinition]$Member,
+        [string]$CommandName
+    )
+    & $proxyTable[$Member.TypeName] $CommandName $Member
+}
+
+update-formatdata -PrependPath (join-path $ExecutionContext.SessionState.Module.ModuleBase 'Poke.Format.ps1xml')
+
+# scriptblock is not bound to this module's scope? weird bug?
+Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName MemberType -Value {    
+    try { invoke-formathelper $this get-membertype } catch { write-warning "oops: $_" }
+} -Force
+
+Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName Modifier -Value {    
+    try { invoke-formathelper $this get-membermodifier } catch { write-warning "oops: $_" }
+} -Force
 
 new-alias -Name peek -Value New-ObjectProxy -Force
-Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate
+Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate, Invoke-FormatHelper
