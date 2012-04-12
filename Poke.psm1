@@ -84,8 +84,6 @@ $initializer = {
         $baseType = $baseObject.GetType()
     }
 
-    # [string].getmethod("Format", $binding, $null, $a, $null)
-
     foreach ($method in @($methodInfos|sort name -unique)) {
 
         $methodName = $method.name
@@ -137,7 +135,6 @@ $initializer = {
         $definition.description = "..." # todo: store modifiers
         
         export-modulemember $methodname
-        #$methodName
     }
 }
 
@@ -244,6 +241,7 @@ function New-TypeProxy {
         Add-fields $proxy "Public,NonPublic,DeclaredOnly,Static" > $null        
         Add-properties $proxy "Public,NonPublic,DeclaredOnly,Static" > $null
 
+        write-verbose "Registering in proxyTable"
         $proxyTable[$proxy.tostring()] = $proxy.__GetModuleInfo()
 
         $proxy
@@ -355,6 +353,7 @@ function New-InstanceProxy {
         $psobject.typenames.insert(0, "Pokeable.Object")
         $psobject.typenames.insert(0, "Pokeable.$($type.fullname)#$instanceId")
 
+        write-verbose "Registering in proxyTable"
         $proxyTable[$proxy.tostring()] = $proxy.__GetModuleInfo()
                 
         $proxy
@@ -765,22 +764,34 @@ Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberTy
 
 function Invoke-FormatHelper {
     param(
+        [parameter()]
         [Microsoft.PowerShell.Commands.MemberDefinition]$Member,
-        [string]$CommandName
+        [parameter()]
+        [string]$CommandName,
+        [parameter()]
+        [string]$DefaultValue
     )
-    & $proxyTable[$Member.TypeName] $CommandName $Member
+    $proxy = $proxyTable[$Member.TypeName]
+    if ($proxy) {
+        & $proxyTable[$Member.TypeName] $CommandName $Member
+    } else {
+        # not a proxied type or instance
+        $DefaultValue
+    }
 }
 
-update-formatdata -PrependPath (join-path $ExecutionContext.SessionState.Module.ModuleBase 'Poke.Format.ps1xml')
+#update-formatdata -PrependPath (join-path $ExecutionContext.SessionState.Module.ModuleBase 'Poke.Format.ps1xml')
+
 
 # scriptblock is not bound to this module's scope? weird bug?
 Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName MemberType -Value {    
-    try { invoke-formathelper $this get-membertype } catch { write-warning "oops: $_" }
+    try { invoke-formathelper $this get-membertype $this.psbase.membertype } catch { write-warning "oops: $_" }
 } -Force
 
 Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName Modifier -Value {    
-    try { invoke-formathelper $this get-membermodifier } catch { write-warning "oops: $_" }
+    try { invoke-formathelper $this get-membermodifier "" } catch { write-warning "oops: $_" }
 } -Force
+
 
 new-alias -Name peek -Value New-ObjectProxy -Force
 Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate, Invoke-FormatHelper
