@@ -7,24 +7,60 @@
 
 Set-StrictMode -Version Latest
 
-$adapterType = [psobject].assembly.gettype("System.Management.Automation.DotNetAdapter")
-$getMethodDefinition = $adapterType.getmethod("GetMethodInfoOverloadDefinition", [reflection.bindingflags]"static,nonpublic")
-$proxyTable = @{}
+$SCRIPT:proxyTable = @{}
 
-$formatHelperFunctions = {
+############################################
+#
+# PS1XML Format function helper definitions
+#
+############################################
+
+$SCRIPT:formatHelperFunctions = {
+    # These functions are defined within module scope for a single instance or type proxy.
+
+    $SCRIPT:adapterType = [psobject].assembly.gettype("System.Management.Automation.DotNetAdapter")
+    $SCRIPT:getMethodDefinition = $adapterType.getmethod("GetMethodInfoOverloadDefinition", [reflection.bindingflags]"static,nonpublic")
+    
     function Get-MemberDefinition {
         param(
-            [string]$Name,
-            [reflection.methodbase]$MethodBase
-            #[int]$ParametersToIgnore
+            [parameter(mandatory=$true)]
+            [validatenotnullorempty()]
+            [string]$Name #,
+
+<#
+            [parameter(mandatory=$true, valuefrompipeline=$true)]
+            [validatenotnull()]
+            [reflection.methodbase[]]$MethodBase
+#>
         )
 
-        # internal static string GetMethodInfoOverloadDefinition(string memberName, MethodBase methodEntry, int parametersToIgnore)
-        $getMethodDefinition.Invoke($adapterType, $name, $methodbase, 0)
+        begin {
+            $definition = @()
+        }
+
+        process {
+            #foreach ($m in $MethodBase) {
+            #    $definition += $getMethodDefinition.Invoke($adapterType, @($name, $m, 0))
+            #}
+        }
+
+        end {
+            $definition -join ", "
+        }
     }
 
     function Get-MemberModifier {
-        "Public"
+        param(
+            [parameter(mandatory=$true)]
+            [Microsoft.PowerShell.Commands.MemberDefinition]$PSMethod
+        )
+        # modifiers are cached in exported function description
+        Write-Verbose "getting function description for $($psmethod.psbase.name)"
+        
+        $description = (get-item function:"$($psmethod.psbase.name)").Description
+        if ($description) {
+            $description.split(":")[0]
+        }        
     }
 
     function Get-MemberType {
@@ -40,11 +76,11 @@ $formatHelperFunctions = {
 
 ############################################
 #
-# method generator lambda
+# Proxy Method generator definition (lambda)
 #
 ############################################
 
-$initializer = {
+$SCRIPT:initializer = {
     param(
         [Parameter(mandatory=$true, position=0)]
         [validatenotnull()]
@@ -132,10 +168,31 @@ $initializer = {
         # isassembly: internal
         # isprivate: private
         
-        $definition.description = "..." # todo: store modifiers
+        # methodattributes are a bit obtuse
+        #$definition.description = $method.attributes.tostring() + ":(overloads)"
+
+        $modifiers = @()
+        if ($method.ispublic) {
+            $modifiers += "public"
+        } elseif ($method.isFamily) {
+            $modifiers += "protected"
+        } elseif ($method.isFamilyOrAssembly) {
+            $modifiers += "protected internal"
+        } elseif ($method.isAssembly) {
+            $modifiers += "internal"
+        } elseif ($method.isPrivate) {
+            $modifiers += "private"
+        }
+        
+        if ($method.isstatic) {
+            $modifiers += "static"
+        }
+        
+        $definition.description = ($modifiers -join ", ") + ":(overloads)"
+
         
         export-modulemember $methodname
-    }
+    } # /foreach method
 }
 
 ############################################
@@ -617,6 +674,7 @@ For a method with no overloads, we will choose the default method and create a c
                   $null
              )
         ) # end invoke
+    
     } else {
         # method not overloaded
         Write-Verbose "$($method.name) is not overloaded."
@@ -629,7 +687,7 @@ For a method with no overloads, we will choose the default method and create a c
         # if parametertype is $null, fill it out; if it's not $null,
         # override it to correct it if needed, and warn user.
         if ($pscmdlet.ParameterSetName -eq "FromParameterType") {           
-            if ($ParameterType -and ((compare-object $parametertype $methodinfo.GetParameters().parametertype))) {
+            if ($ParameterType -and ((compare-object $parametertype $methodinfo.GetParameters().parametertype))) { #psv3
                 write-warning "Method not overloaded: Ignoring provided parameter type(s)."
             }
             $ParameterType = $methodInfo.GetParameters().parametertype
@@ -639,18 +697,17 @@ For a method with no overloads, we will choose the default method and create a c
 
     if (-not $methodInfo) {
         write-warning "Could not find matching signature for $($method.Name) with $($parametertype.count) parameter(s)."
-    } else {
-        
+    } else {        
         write-verbose "MethodInfo: $methodInfo"
 
         # it's important here to use the actual MethodInfo's parameter types,
         # not the desired types ($parametertype) because they may not match,
         # e.g. asked for method(int) but match is method(object).
 
-        if ($pscmdlet.ParameterSetName -eq "FromParameterType") {            
+        if ($pscmdlet.ParameterSetName -eq "FromParameterType") {
             
             if ($methodInfo.GetParameters().count -gt 0) {
-                $ParameterType = $methodInfo.GetParameters().ParameterType
+                $ParameterType = $methodInfo.GetParameters().ParameterType #psv3
             }
             
             # need to create corresponding [action[]] or [func[]]
@@ -773,7 +830,12 @@ function Invoke-FormatHelper {
     )
     $proxy = $proxyTable[$Member.TypeName]
     if ($proxy) {
-        & $proxyTable[$Member.TypeName] $CommandName $Member
+        try {
+            & $proxyTable[$Member.TypeName] $CommandName $Member @args
+        } catch {
+            write-warning $_
+            $DefaultValue
+        }
     } else {
         # not a proxied type or instance
         $DefaultValue
@@ -782,16 +844,19 @@ function Invoke-FormatHelper {
 
 #update-formatdata -PrependPath (join-path $ExecutionContext.SessionState.Module.ModuleBase 'Poke.Format.ps1xml')
 
-
 # scriptblock is not bound to this module's scope? weird bug?
 Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName MemberType -Value {    
-    try { invoke-formathelper $this get-membertype $this.psbase.membertype } catch { write-warning "oops: $_" }
+    try { invoke-formathelper $this get-membertype -default $this.psbase.membertype } catch { write-warning "get-membertype: $_" }
 } -Force
 
 Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName Modifier -Value {    
-    try { invoke-formathelper $this get-membermodifier "" } catch { write-warning "oops: $_" }
+    try { invoke-formathelper $this get-membermodifier -default "public" } catch { write-warning "get-membermodifier: $_" }
 } -Force
 
+# overloads
+Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName Definition -Value {    
+    try { invoke-formathelper $this get-memberdefinition -default $this.psbase.definition } catch { write-warning "get-memberdefinition: $_" }
+} -Force
 
 new-alias -Name peek -Value New-ObjectProxy -Force
 Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate, Invoke-FormatHelper
