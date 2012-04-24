@@ -18,13 +18,13 @@ ModuleVersion = '1.0'
 GUID = 'cba2bd6c-5303-479e-bbed-6fd997ea5d31'
 
 # Author of this module
-Author = 'o.grehan'
+Author = 'Oisin Grehan'
 
 # Company or vendor of this module
-CompanyName = 'Unknown'
+CompanyName = 'MVP'
 
 # Copyright statement for this module
-Copyright = '(c) 2012 o.grehan. All rights reserved.'
+Copyright = '(c) 2012 Oisin Grehan. All rights reserved.'
 
 # Description of the functionality provided by this module
 # Description = ''
