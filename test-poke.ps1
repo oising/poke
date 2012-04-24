@@ -1,4 +1,4 @@
-﻿ipmo poke -force
+﻿ipmo .\poke.psd1 -force
 
 #$VerbosePreference = "Continue"
 $error.Clear()

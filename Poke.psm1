@@ -7,6 +7,13 @@
 
 Set-StrictMode -Version Latest
 
+# libraries to include
+. (join-path $PSScriptRoot delegate.ps1)
+
+# global cache for -ascustomobject instance/type proxies
+# this is needed for the format helper functions as metadata
+# and hints about proxied objects are hidden in ETS member 
+# attributes
 $SCRIPT:proxyTable = @{}
 
 ############################################
@@ -24,14 +31,11 @@ $SCRIPT:formatHelperFunctions = {
     function Get-MemberDefinition {
         param(
             [parameter(mandatory=$true)]
-            [validatenotnullorempty()]
-            [string]$Name #,
+            [Microsoft.PowerShell.Commands.MemberDefinition]$Member,
 
-<#
-            [parameter(mandatory=$true, valuefrompipeline=$true)]
-            [validatenotnull()]
-            [reflection.methodbase[]]$MethodBase
-#>
+            [parameter()]
+            [pstypename("Pokeable.Object")]
+            [psobject]$Proxy
         )
 
         begin {
@@ -49,28 +53,59 @@ $SCRIPT:formatHelperFunctions = {
         }
     }
 
+    # computes modifiers for a memberdefinition instance (public, private, internal, static etc)
     function Get-MemberModifier {
         param(
             [parameter(mandatory=$true)]
-            [Microsoft.PowerShell.Commands.MemberDefinition]$PSMethod
+            [Microsoft.PowerShell.Commands.MemberDefinition]$Member,
+
+            [parameter()]
+            [pstypename("Pokeable.Object")]
+            [psobject]$Proxy
         )
         # modifiers are cached in exported function description
-        Write-Verbose "getting function description for $($psmethod.psbase.name)"
+        Write-Verbose "getting function description for $($Member.psbase.name)"
         
-        $description = (get-item function:"$($psmethod.psbase.name)").Description
-        if ($description) {
-            $description.split(":")[0]
-        }        
+        try {
+            $description = (get-item function:"$($Member.psbase.name)").Description
+            if ($description) {
+                $description.split(":")[0]
+            }
+        } catch { "-" }
+
     }
 
+    # computes member type for a memberdefinition (e.g. replaces ScriptProperty with Field or Property
+    # and ScriptMethod with Method)
     function Get-MemberType {
         param(
-            [Microsoft.PowerShell.Commands.MemberDefinition]$Member
+            [parameter(mandatory=$true)]
+            [Microsoft.PowerShell.Commands.MemberDefinition]$Member,
+            
+            [parameter()]
+            [pstypename("Pokeable.Object")]
+            [psobject]$Proxy
         )
 
         # don't want to recursive trigger ETS so use psbase
         $memberType = $member.psbase.MemberType
-        $memberType
+
+        switch ($memberType) {
+            ScriptProperty {
+                # the proxied member type is cached in a description attribute on the scriptproperty's getterscript (e.g. field/property)
+                $getter = $proxy.psobject.members[$member.Name].getterscript
+                $description = $getter.Attributes.Find( { $args[0] -is [System.ComponentModel.DescriptionAttribute] })
+                $description.description
+            }
+            ScriptMethod {
+                # add asterisk to differentiate between methods on the psobject (gettype etc) and proxied members
+                "Method*"
+            }
+            default {
+                # catch all
+                $memberType
+            }
+        }
     }
 }
 
@@ -123,7 +158,7 @@ $SCRIPT:initializer = {
     foreach ($method in @($methodInfos|sort name -unique)) {
 
         $methodName = $method.name
-        $returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType)
+        $returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType).split(",")[0] # trim fully qualified types
 
         write-verbose "Creating method $returntype $methodname`(...`)"
             
@@ -184,12 +219,12 @@ $SCRIPT:initializer = {
             $modifiers += "private"
         }
         
-        if ($method.isstatic) {
-            $modifiers += "static"
-        }
+        #if ($method.isstatic) {
+        #    $modifiers += "static"
+        #}
         
+        # TODO: cache overload description (will compute from call to dotnetadapter)
         $definition.description = ($modifiers -join ", ") + ":(overloads)"
-
         
         export-modulemember $methodname
     } # /foreach method
@@ -235,7 +270,7 @@ function New-TypeProxy {
             param([scriptblock]$block)
             . $ExecutionContext.SessionState.Module.NewBoundScriptBlock($block) @args
         }
-
+        
         function __CreateInstance {
             write-verbose "Type is $type ; `$args count is $($args.count)"
 
@@ -299,7 +334,7 @@ function New-TypeProxy {
         Add-properties $proxy "Public,NonPublic,DeclaredOnly,Static" > $null
 
         write-verbose "Registering in proxyTable"
-        $proxyTable[$proxy.tostring()] = $proxy.__GetModuleInfo()
+        $proxyTable[$proxy.tostring()] = $proxy #.__GetModuleInfo()
 
         $proxy
     }
@@ -411,7 +446,7 @@ function New-InstanceProxy {
         $psobject.typenames.insert(0, "Pokeable.$($type.fullname)#$instanceId")
 
         write-verbose "Registering in proxyTable"
-        $proxyTable[$proxy.tostring()] = $proxy.__GetModuleInfo()
+        $proxyTable[$proxy.tostring()] = $proxy #.__GetModuleInfo()
                 
         $proxy
     }
@@ -448,21 +483,26 @@ function Add-Fields {
     foreach ($field in ($fields|sort name)) {
         
         # clean up type string for generics and accelerated types
-        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType)
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType).split(",")[0] # trim fully qualified types
 
         # close over field and instance vars but insert literal for fieldtype
         $getter = [scriptblock]::create(
-            "[outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
+            "[componentmodel.description('Field*')][outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
         
+        # stash some metadata on the getter
+        #$getter.Attributes.Add((new-object System.ComponentModel.DescriptionAttribute "Field*"))
+
         # declared readonly?
         if ($field.IsInitOnly) {
             $fieldDef = New-Object management.automation.psscriptproperty $field.Name, $getter
         } else {
+            # TODO: strongly type $value parameter in setter
             $setter = { param($value); $field.SetValue($self, $value) }.GetNewClosure()
             
             $fieldDef = New-Object management.automation.psscriptproperty $field.Name, $getter, $setter
         }
         write-verbose "Adding $flags field $($field.name)"
+        
         $psobject.properties.add($fieldDef)
     }
 }
@@ -498,16 +538,20 @@ function Add-Properties {
     foreach ($property in ($properties|sort name)) {
 
         # clean up type string for generics and accelerated types
-        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType)
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType).split(",")[0] # trim fully qualified output
 
         # property getter
         $getter = [scriptblock]::create(
-            "[outputtype('$outputType')]param(); `$property.GetValue(`$self)").GetNewClosure()
+            "[componentmodel.description('Property*')][outputtype('$outputType')]param(); `$property.GetValue(`$self)").GetNewClosure()
+
+        # stash some metadata on the getter scriptblock
+        #$getter.Attributes.Add((new-object System.ComponentModel.DescriptionAttribute "Property*"))
         
         # i don't account for setter-only properties
         if (-not $property.CanWrite) {
             $propertyDef = New-Object management.automation.psscriptproperty $property.Name, $getter
         } else {
+            # TODO: strongly type $value parameter in setter
             # property setter
             $setter = { param($value); $property.SetValue($self, $value) }.GetNewClosure()            
             $propertyDef = New-Object management.automation.psscriptproperty $property.Name, $getter, $setter
@@ -550,194 +594,6 @@ function Find-Type {
     $matches
 }
 
-############################################
-#
-#  Get Delegate
-#
-############################################
-
-function Get-Delegate {
-<#
-.SYNOPSIS
-Create an action[] or func[] delegate for a psmethod reference.
-.DESCRIPTION
-Create an action[] or func[] delegate for a psmethod reference.
-.PARAMETER Method
-A PSMethod reference to create a delegate for. This parameter accepts pipeline input.
-.PARAMETER ParameterType
-An array of types to use for method overload resolution. If there are no overloaded methods
-then this array will be ignored but a warning will be omitted if the desired parameters were
-not compatible.
-.PARAMETER DelegateType
-The delegate to create for the corresponding method. Example: [string]::format | get-delegate -delegatetype func[int,string]
-.INPUTS System.Management.Automation.PSMethod, System.Type[]
-.EXAMPLE
-$delegate = [string]::format | Get-Delegate string,string
-
-Gets a delegate for a matching overload with string,string parameters.
-It will actually return func<object,string> which is the correct 
-signature for invoking string.format with string,string.
-.EXAMPLE
-$delegate = [console]::beep | Get-Delegate @()
-
-Gets a delegate for a matching overload with no parameters.
-.EXAMPLE
-$delegate = [console]::beep | get-delegate int,int
-
-Gets a delegate for a matching overload with @(int,int) parameters.
-.EXAMPLE
-$delegate = [string]::format | Get-Delegate -Delegate 'func[string,object,string]'
-
-Gets a delegate for an explicit func[].
-.EXAMPLE
-$delegate = [console]::writeline | Get-Delegate -Delegate 'action[int]'
-
-Gets a delegate for an explicit action[].
-.EXAMPLE
-$delegate = [string]::isnullorempty | get-delegate 
-
-For a method with no overloads, we will choose the default method and create a corresponding action/action[] or func[].
-#>
-    [CmdletBinding(DefaultParameterSetName="FromParameterType")]
-    [outputtype('System.Action','System.Action[]','System.Func[]')]
-    param(
-        [parameter(mandatory=$true, valuefrompipeline=$true)]
-        [system.management.automation.psmethod]$Method,
-
-        [parameter(position=0, valuefromremainingarguments=$true, parametersetname="FromParameterType")]
-        [validatenotnull()]
-        [allowemptycollection()]
-        [Alias("types")]
-        [type[]]$ParameterType = @(),
-
-        [parameter(mandatory=$true, parametersetname="FromDelegate")]
-        [validatenotnull()]
-        [validatescript({ ([delegate].isassignablefrom($_)) })]
-        [type]$DelegateType
-    )
-
-    $base = $method.GetType().GetField("baseObject","nonpublic,instance").GetValue($method)    
-    
-    if ($base -is [type]) {
-        [type]$baseType = $base
-        [reflection.bindingflags]$flags = "Public,Static"
-    } else {
-        [type]$baseType = $base.GetType()
-        [reflection.bindingflags]$flags = "Public,Instance"
-    }
-
-    if ($pscmdlet.ParameterSetName -eq "FromDelegate") {
-        write-verbose "Inferring from delegate."
-
-        if ($DelegateType -eq [action]) {
-            # void action        
-            $ParameterType = [type[]]@()
-        
-        } elseif ($DelegateType.IsGenericType) {
-            # get type name
-            $name = $DelegateType.Name
-
-            # is it [action[]] ?
-            if ($name.StartsWith("Action``")) {
-    
-                $ParameterType = @($DelegateType.GetGenericArguments())    
-            
-            } elseif ($name.StartsWith("Func``")) {
-    
-                # it's a [func[]]
-                $ParameterType = @($DelegateType.GetGenericArguments())
-                $ParameterType = $ParameterType[0..$($ParameterType.length - 2)] # trim last element (TReturn)
-            } else {
-                throw "Unsupported delegate type: Use Action<> or Func<>."
-            }
-        }
-    }
-
-    [reflection.methodinfo]$methodInfo = $null
-
-    if ($Method.OverloadDefinitions.Count -gt 1) {
-        # find best match overload
-        write-verbose "$($method.name) has multiple overloads; finding best match."
-
-        $finder = [type].getmethod("GetMethodImpl", [reflection.bindingflags]"NonPublic,Instance")
-
-        write-verbose "base is $($base.gettype())"
-
-        $methodInfo = $finder.invoke(
-            $baseType,
-             @(
-                  $method.Name,
-                  $flags,
-                  $null,
-                  $null,
-                  [type[]]$ParameterType,
-                  $null
-             )
-        ) # end invoke
-    
-    } else {
-        # method not overloaded
-        Write-Verbose "$($method.name) is not overloaded."
-        if ($base -is [type]) {
-            $methodInfo = $base.getmethod($method.name, $flags)
-        } else {
-            $methodInfo = $base.gettype().GetMethod($method.name, $flags)
-        }
-
-        # if parametertype is $null, fill it out; if it's not $null,
-        # override it to correct it if needed, and warn user.
-        if ($pscmdlet.ParameterSetName -eq "FromParameterType") {           
-            if ($ParameterType -and ((compare-object $parametertype $methodinfo.GetParameters().parametertype))) { #psv3
-                write-warning "Method not overloaded: Ignoring provided parameter type(s)."
-            }
-            $ParameterType = $methodInfo.GetParameters().parametertype
-            write-verbose ("Set default parameters to: {0}" -f ($ParameterType -join ","))
-        }
-    }
-
-    if (-not $methodInfo) {
-        write-warning "Could not find matching signature for $($method.Name) with $($parametertype.count) parameter(s)."
-    } else {        
-        write-verbose "MethodInfo: $methodInfo"
-
-        # it's important here to use the actual MethodInfo's parameter types,
-        # not the desired types ($parametertype) because they may not match,
-        # e.g. asked for method(int) but match is method(object).
-
-        if ($pscmdlet.ParameterSetName -eq "FromParameterType") {
-            
-            if ($methodInfo.GetParameters().count -gt 0) {
-                $ParameterType = $methodInfo.GetParameters().ParameterType #psv3
-            }
-            
-            # need to create corresponding [action[]] or [func[]]
-            if ($methodInfo.ReturnType -eq [void]) {
-                if ($ParameterType.Length -eq 0) {
-                    $DelegateType = [action]
-                } else {
-                    # action<...>
-                    
-                    # replace desired with matching overload parameter types
-                    #$ParameterType = $methodInfo.GetParameters().ParameterType
-                    $DelegateType = ("action[{0}]" -f ($ParameterType -join ",")) -as [type]
-                }
-            } else {
-                # func<...>
-
-                # replace desired with matching overload parameter types
-                #$ParameterType = $methodInfo.GetParameters().ParameterType
-                $DelegateType = ("func[{0}]" -f (($ParameterType + $methodInfo.ReturnType) -join ",")) -as [type]
-            }                        
-        }
-        Write-Verbose $DelegateType
-
-        if ($flags -band [reflection.bindingflags]::Instance) {
-            $methodInfo.createdelegate($DelegateType, $base)
-        } else {
-            $methodInfo.createdelegate($DelegateType)
-        }
-    }
-}
 
 ############################################
 #
@@ -778,33 +634,7 @@ function New-ObjectProxy {
     }
 }
 
-function ConvertTo-CliXml {
-    param(
-        [parameter(position=0,mandatory=$true,valuefrompipeline=$true)]
-        [validatenotnull()]
-        [psobject]$object
-    )
-    begin {
-        $type = [psobject].assembly.gettype("System.Management.Automation.Serializer")
-        $ctor = $type.getconstructor("instance,nonpublic", $null, @([xml.xmlwriter]), $null)
-        $sw = new-object io.stringwriter
-        $xw = new-object xml.xmltextwriter $sw
-        $serializer = $ctor.invoke($xw)
-        $method = $type.getmethod("Serialize", "nonpublic,instance", $null, [type[]]@([object]), $null)
-        $done = $type.getmethod("Done", [reflection.bindingflags]"nonpublic,instance")
-    }
-    process {
-        try {
-            $method.invoke($serializer, $object)
-        } catch {
-            write-warning "Could not serialize $($object.gettype()): $_"
-        }
-    }
-    end {    
-        $done.invoke($serializer, @())
-        $sw.ToString()
-    }
-}
+
 
 <#
 Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberType ScriptMethod -MemberName CreateDelegate -Value {
@@ -831,7 +661,8 @@ function Invoke-FormatHelper {
     $proxy = $proxyTable[$Member.TypeName]
     if ($proxy) {
         try {
-            & $proxyTable[$Member.TypeName] $CommandName $Member @args
+            # invoke the command in the scope of the module that proxies this type or instance
+            & $proxyTable[$Member.TypeName].__GetModuleInfo() $CommandName $Member $proxy @args
         } catch {
             write-warning $_
             $DefaultValue
@@ -844,7 +675,7 @@ function Invoke-FormatHelper {
 
 #update-formatdata -PrependPath (join-path $ExecutionContext.SessionState.Module.ModuleBase 'Poke.Format.ps1xml')
 
-# scriptblock is not bound to this module's scope? weird bug?
+# scriptblock is not bound to this module's scope? weird bug? we have to use invoke-format helper to lookup module in a shared global
 Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -MemberType ScriptProperty -MemberName MemberType -Value {    
     try { invoke-formathelper $this get-membertype -default $this.psbase.membertype } catch { write-warning "get-membertype: $_" }
 } -Force
