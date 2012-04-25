@@ -28,6 +28,22 @@ $SCRIPT:formatHelperFunctions = {
     $SCRIPT:adapterType = [psobject].assembly.gettype("System.Management.Automation.DotNetAdapter")
     $SCRIPT:getMethodDefinition = $adapterType.getmethod("GetMethodInfoOverloadDefinition", [reflection.bindingflags]"static,nonpublic")
     
+    # cache a delegate to methodinformation .ctor
+    $miType = [psobject].assembly.gettype("System.Management.Automation.MethodInformation")
+
+    # enhanced .ctor definition with parameter names
+    function Get-ConstructorDefinition {
+        param(
+            [parameter(mandatory=$true)]
+            [type]$Type
+        )
+        $type.GetConstructors("public,nonpublic,instance") | % {
+            ".ctor ({0})" -f (($_.getparameters() | % {
+                "{0} {1}" -f [microsoft.powershell.tostringcodemethods]::type($_.parametertype).split(",")[0], $_.name
+            }) -join ", ")
+        }
+    }
+
     function Get-MemberDefinition {
         param(
             [parameter(mandatory=$true)]
@@ -304,8 +320,9 @@ function New-TypeProxy {
             $ctor = $type.GetConstructor("Public,NonPublic,Instance", $null, $types, $null)
 
             if (-not $ctor) {
-                write-warning "No matching constructor found. Available constructors:"
-                $type.getconstructors("Public,NonPublic,Instance") | % { write-host -ForegroundColor Green " $_" }
+                write-warning "No matching constructor found. Available constructors:"                
+                #$type.getconstructors("Public,NonPublic,Instance") | % { write-host -ForegroundColor Green " $_" }
+                Get-ConstructorDefinition $type | % { write-host -ForegroundColor green " $_" }
                 return 
             }
 
