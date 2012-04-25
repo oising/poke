@@ -22,14 +22,40 @@ $SCRIPT:proxyTable = @{}
 #
 ############################################
 
+filter Limit-SpecialMember {
+    if (-not ($_.isspecialname -or $_.GetCustomAttributes([System.Runtime.CompilerServices.CompilerGeneratedAttribute], $false).count)) {
+        $_
+    } else {
+        if ($_.isspecialname) {
+            Write-Verbose "skipping special member $_"
+        } else {
+            Write-Verbose "skipping compiler generated $_"
+        }
+    }
+}
+
 $SCRIPT:formatHelperFunctions = {
     # These functions are defined within module scope for a single instance or type proxy.
 
     $SCRIPT:adapterType = [psobject].assembly.gettype("System.Management.Automation.DotNetAdapter")
     $SCRIPT:getMethodDefinition = $adapterType.getmethod("GetMethodInfoOverloadDefinition", [reflection.bindingflags]"static,nonpublic")
     
-    # cache a delegate to methodinformation .ctor
-    $miType = [psobject].assembly.gettype("System.Management.Automation.MethodInformation")
+    # cache some often used members for performance reasons
+    $SCRIPT:miType = [psobject].assembly.gettype("System.Management.Automation.MethodInformation")
+    $SCRIPT:miCtor = $mitype.GetConstructor("nonpublic,instance", $null, [type[]]@([reflection.methodinfo], [int]), $null)
+    $SCRIPT:miDefinition = $mitype.GetProperty("methodDefinition", [reflection.bindingflags]"instance,nonpublic")
+
+    filter Limit-SpecialMember {
+        if (-not ($_.isspecialname -or $_.GetCustomAttributes([System.Runtime.CompilerServices.CompilerGeneratedAttribute], $false).count)) {
+            $_
+        } else {
+            if ($_.isspecialname) {
+                Write-Verbose "skipping special member $_"
+            } else {
+                Write-Verbose "skipping compiler generated $_"
+            }
+        }
+    }
 
     # enhanced .ctor definition with parameter names
     function Get-ConstructorDefinition {
@@ -42,6 +68,20 @@ $SCRIPT:formatHelperFunctions = {
                 "{0} {1}" -f [microsoft.powershell.tostringcodemethods]::type($_.parametertype).split(",")[0], $_.name
             }) -join ", ")
         }
+    }
+
+    function Get-MethodDefinition {
+        param(
+            [parameter(mandatory=$true)]
+            [validatenotnull()]
+            [reflection.methodinfo]$MethodInfo
+        )
+        $mi = $miCtor.Invoke(@($MethodInfo, 0))
+        $miDefinition.getvalue($mi)
+    }
+
+    function Get-PropertyOrFieldDefinition {
+        "Proxy Property/Field"
     }
 
     function Get-MemberDefinition {
@@ -59,16 +99,18 @@ $SCRIPT:formatHelperFunctions = {
 
         switch ($memberType) {
             ScriptProperty {
-                "Proxy Property/Field"
+                Get-PropertyOrFieldDefinition
             }
             ScriptMethod {
-                "Proxy Method"
+                "Not implemented"
             }
             Method {
-                "Method: {0}" -f $Member.psbase.Definition
+                # pass through
+                $Member.psbase.Definition
             }
             Property {
-                "Property: {0}" -f $Member.psbase.definition
+                # pass through
+                $Member.psbase.definition
             }
         }
 
@@ -101,9 +143,15 @@ $SCRIPT:formatHelperFunctions = {
                     if ($description) {
                         $description.split(":")[0]
                     } else {
-                        "-"
+                        # special case ToString 
+                        if ($member.psbase.name -eq "ToString") {
+                            "public"
+                        } else {
+                            # special case proxy helpers, like __CreateInstance, __GetModuleInfo etc
+                            "-"
+                        }
                     }
-                } catch { "-" }
+                } catch { "-" } # no description property on function
             }
             default { "public" }
         }
@@ -165,18 +213,6 @@ $SCRIPT:initializer = {
 
     write-verbose "Method initializer."
 
-    filter Limit-SpecialMember {
-        if (-not ($_.isspecialname -or $_.GetCustomAttributes([System.Runtime.CompilerServices.CompilerGeneratedAttribute], $false).count)) {
-            $_
-        } else {
-            if ($_.isspecialname) {
-                Write-Verbose "skipping special member $_"
-            } else {
-                Write-Verbose "skipping compiler generated $_"
-            }
-        }
-    }
-
     if ($baseObject.gettype().Name -eq "RuntimeType") {
         # type
         Write-Verbose "`$baseObject is a Type"
@@ -192,13 +228,16 @@ $SCRIPT:initializer = {
     foreach ($method in @($methodInfos|sort name -unique)) {
 
         $methodName = $method.name
-        $returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType).split(",")[0] # trim fully qualified types
+        #$returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType).split(",")[0] # trim fully qualified types
 
-        write-verbose "Creating method $returntype $methodname`(...`)"
-            
+        write-verbose "Creating method $methodname`(...`)"
+        $overloads = $methodInfos|? name -eq $methodName
+
         # psscriptmethod ignores outputtype - maybe this will get fixed in later releases of ps?
+        # ultimately it's of dubious use for methods as overloads may differ in return type
+        # of course they must have differing parameters too as a method cannot differ _only_ by return type.
         $definition = new-item function:$methodName -value ([scriptblock]::create("
-            [outputtype('$returntype')]
+            [componentmodel.description('$overloads')]
             param();
                 
             write-verbose 'called $methodName'
@@ -207,7 +246,6 @@ $SCRIPT:initializer = {
             try {
                 if ((`$overloads = @(`$baseType.getmethods(`$binding)|? name -eq '$methodname')).count -gt 1) {
                     write-verbose 'self $self ; flags: $flags ; finding best fit overload'
-                    #write-warning ""multiple overloads (`$(`$overloads.count))""
                     `$types = [type]::gettypearray(`$args)
                     `$method = `$baseType.getmethod('$methodname', `$binding, `$null, `$types, `$null)
                     if (-not `$method) {
@@ -220,6 +258,9 @@ $SCRIPT:initializer = {
                 # invoke
                 `$method.invoke(`$self, `$binding, `$null, `$args, `$null)                                    
             } catch {
+
+                # TODO: remove this redundant check
+
                 if (`$_.exception.innerexception -is [Reflection.TargetParameterCountException]) {
                         
                     write-warning ""Could not find matching overload with `$(`$args.count) parameter(s).""
@@ -333,14 +374,15 @@ function New-TypeProxy {
                 write-warning "Could not create instance: $_"
             }
         }
-
-        # define methods
+        
         $self = $type
-        . apply $initializer $type "Public,NonPublic,Static,DeclaredOnly"
-         
+
         # bind format helper functions to this module's scope
         . apply $formatHelperFunctions        
 
+        # define methods
+        . apply $initializer $type "Public,NonPublic,Static,DeclaredOnly"
+         
         function __GetBaseObject {
             $type
         }
@@ -364,8 +406,7 @@ function New-TypeProxy {
         $proxy.psobject.typenames.insert(0, "Pokeable.Object")
         $proxy.psobject.typenames.insert(0, "Pokeable.System.RuntimeType#$($type.fullname)")
 
-        # TODO: create field/property initializer lambdas
-        Add-fields $proxy "Public,NonPublic,DeclaredOnly,Static" > $null        
+        Add-fields $proxy "Public,NonPublic,DeclaredOnly,Static" > $null
         Add-properties $proxy "Public,NonPublic,DeclaredOnly,Static" > $null
 
         write-verbose "Registering in proxyTable"
@@ -419,11 +460,11 @@ function New-InstanceProxy {
         $type = $self.gettype()
         write-verbose "Created an instance of $type"
 
-        # define methods
-        . apply $initializer $self "Public,NonPublic,DeclaredOnly,Instance"
-
         # bind format helper functions to this module's scope
         . apply $formatHelperFunctions
+        
+        # define methods
+        . apply $initializer $self "Public,NonPublic,DeclaredOnly,Instance"
 
         function __GetModuleInfo {
             $ExecutionContext.SessionState.Module
@@ -473,12 +514,11 @@ function New-InstanceProxy {
             write-warning "Failed to fix up overloads: $_"        
         }
         
-        Add-fields $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null
-        
-        Add-properties $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null
-
         $psobject.typenames.insert(0, "Pokeable.Object")
         $psobject.typenames.insert(0, "Pokeable.$($type.fullname)#$instanceId")
+
+        Add-fields $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null        
+        Add-properties $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null
 
         write-verbose "Registering in proxyTable"
         $proxyTable[$proxy.tostring()] = $proxy #.__GetModuleInfo()
@@ -497,6 +537,7 @@ function Add-Fields {
     param(
         [Parameter(mandatory=$true, position=0)]
         [validatenotnull()]
+        [pstypename("Pokeable.Object")]
         $baseObject,
 
         [Parameter(mandatory=$true, position=1)]
@@ -515,7 +556,7 @@ function Add-Fields {
     $psobject = $baseObject.psobject
 
     # add fields
-    foreach ($field in ($fields|sort name)) {
+    foreach ($field in ($fields|limit-specialmember|sort name)) {
         
         # clean up type string for generics and accelerated types
         $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType).split(",")[0] # trim fully qualified types
@@ -552,6 +593,7 @@ function Add-Properties {
     param(
         [Parameter(mandatory=$true, position=0)]
         [validatenotnull()]
+        [pstypename("Pokeable.Object")]
         $baseObject,
 
         [Parameter(mandatory=$true, position=1)]
@@ -570,7 +612,7 @@ function Add-Properties {
     
 
     # add properties
-    foreach ($property in ($properties|sort name)) {
+    foreach ($property in ($properties|limit-specialmember|sort name)) {
 
         # clean up type string for generics and accelerated types
         $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType).split(",")[0] # trim fully qualified output

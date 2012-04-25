@@ -126,4 +126,4 @@ assert-true {
 $VerbosePreference = "SilentlyContinue"
 
 $s = peek system.string
-$s | gm
+$s | gm | sort modifier | ft -group modifier
