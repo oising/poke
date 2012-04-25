@@ -97,13 +97,18 @@ $SCRIPT:formatHelperFunctions = {
             [psobject]$Proxy
         )
 
-        # don't want to recursive trigger ETS so use psbase
+        # NOTE: we don't want to recursively trigger ETS so use psbase
         $memberType = $member.psbase.MemberType
 
         switch ($memberType) {
+            
             ScriptProperty {
-                Get-PropertyOrFieldDefinition
+                # Property* or Field*
+                $baseMemberType = $member.MemberType # grab _our_ ETS value (not using psbase!)
+
+                "{0}{1} {2}" -f "", $proxy.psobject.Members[$member.Name].TypeNameOfValue, $Member.Name
             }
+
             ScriptMethod {
                 # retrieve from scriptmethod scriptblock attributes
                 $body = $proxy.psobject.members[$member.Name].script
@@ -114,10 +119,12 @@ $SCRIPT:formatHelperFunctions = {
                     "..."
                 }
             }
+            
             Method {
                 # pass through
                 $Member.psbase.Definition
             }
+            
             Property {
                 # pass through
                 $Member.psbase.definition
@@ -221,6 +228,8 @@ $SCRIPT:initializer = {
         [switch]$IncludeSpecialName
     )
 
+    Write-Progress -Id 1 -Activity "Peek" -Status "Initializing methods..."
+
     write-verbose "Method initializer."
 
     if ($baseObject.gettype().Name -eq "RuntimeType") {
@@ -306,12 +315,12 @@ $SCRIPT:initializer = {
             $modifiers += "private"
         }
         
+        
         #if ($method.isstatic) {
         #    $modifiers += "static"
         #}
         
-        # TODO: cache overload description (will compute from call to dotnetadapter)
-        $definition.description = ($modifiers -join ", ") + ":(overloads)"
+        $definition.description = ($modifiers -join ", ") + ":" + $(if ($method.isstatic) { "static" } else { "" })
         
         export-modulemember $methodname
     } # /foreach method
@@ -556,6 +565,8 @@ function Add-Fields {
         [reflection.bindingflags]$flags
     )
 
+    Write-Progress -Id 1 -Activity "Peek" -Status "Initializing fields..."
+
     if ($baseObject.__GetBaseObject() -is [type]) {
         $type = $baseObject.__GetBaseObject()
         $self = $type
@@ -611,6 +622,8 @@ function Add-Properties {
         [Parameter(mandatory=$true, position=1)]
         [reflection.bindingflags]$flags
     )
+
+    Write-Progress -Id 1 -Activity "Peek" -Status "Initializing properties..."
 
     if ($baseObject.__GetBaseObject() -is [type]) {
         $type = $baseObject.__GetBaseObject()
