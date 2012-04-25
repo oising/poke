@@ -1,6 +1,6 @@
 ﻿###########################################
 #
-#             POKE Toolkit 0.2
+#             POKE Toolkit 0.3
 #             By Oisin Grehan (MVP)
 #
 ###########################################
@@ -22,6 +22,7 @@ $SCRIPT:proxyTable = @{}
 #
 ############################################
 
+# used in this module (poke) for property/field filter
 filter Limit-SpecialMember {
     if (-not ($_.isspecialname -or $_.GetCustomAttributes([System.Runtime.CompilerServices.CompilerGeneratedAttribute], $false).count)) {
         $_
@@ -45,6 +46,7 @@ $SCRIPT:formatHelperFunctions = {
     $SCRIPT:miCtor = $mitype.GetConstructor("nonpublic,instance", $null, [type[]]@([reflection.methodinfo], [int]), $null)
     $SCRIPT:miDefinition = $mitype.GetProperty("methodDefinition", [reflection.bindingflags]"instance,nonpublic")
 
+    # used in dynamic modules (proxies) for method filter
     filter Limit-SpecialMember {
         if (-not ($_.isspecialname -or $_.GetCustomAttributes([System.Runtime.CompilerServices.CompilerGeneratedAttribute], $false).count)) {
             $_
@@ -76,6 +78,7 @@ $SCRIPT:formatHelperFunctions = {
             [validatenotnull()]
             [reflection.methodinfo]$MethodInfo
         )
+        # let powershell do the work
         $mi = $miCtor.Invoke(@($MethodInfo, 0))
         $miDefinition.getvalue($mi)
     }
@@ -102,7 +105,14 @@ $SCRIPT:formatHelperFunctions = {
                 Get-PropertyOrFieldDefinition
             }
             ScriptMethod {
-                "Not implemented"
+                # retrieve from scriptmethod scriptblock attributes
+                $body = $proxy.psobject.members[$member.Name].script
+                $description = $body.Attributes.Find( { $args[0] -is [System.ComponentModel.DescriptionAttribute] })
+                if ($description) {
+                    $description.description
+                } else {
+                    "..."
+                }
             }
             Method {
                 # pass through
@@ -230,13 +240,15 @@ $SCRIPT:initializer = {
         $methodName = $method.name
         #$returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType).split(",")[0] # trim fully qualified types
 
-        write-verbose "Creating method $methodname`(...`)"
-        $overloads = $methodInfos|? name -eq $methodName
+        write-verbose "Creating method $methodname`(...`); building method definitions..."
+        $overloads = ($methodInfos|? name -eq $methodName|% { Get-MethodDefinition $_ }) -join ", "
 
         # psscriptmethod ignores outputtype - maybe this will get fixed in later releases of ps?
         # ultimately it's of dubious use for methods as overloads may differ in return type
         # of course they must have differing parameters too as a method cannot differ _only_ by return type.
         $definition = new-item function:$methodName -value ([scriptblock]::create("
+            # cache overloads in description attribute which is easily retrieved from this
+            # scriptblock's attributes property when emitting memberdefinition definition
             [componentmodel.description('$overloads')]
             param();
                 
