@@ -38,19 +38,31 @@ $SCRIPT:formatHelperFunctions = {
             [psobject]$Proxy
         )
 
-        begin {
-            $definition = @()
+        # don't want to recursive trigger ETS so use psbase
+        $memberType = $member.psbase.MemberType
+
+        switch ($memberType) {
+            ScriptProperty {
+                "Proxy Property/Field"
+            }
+            ScriptMethod {
+                "Proxy Method"
+            }
+            Method {
+                "Method: {0}" -f $Member.psbase.Definition
+            }
+            Property {
+                "Property: {0}" -f $Member.psbase.definition
+            }
         }
 
-        process {
-            #foreach ($m in $MethodBase) {
-            #    $definition += $getMethodDefinition.Invoke($adapterType, @($name, $m, 0))
-            #}
-        }
+        #$definition = @()
 
-        end {
-            $definition -join ", "
-        }
+        #foreach ($m in $MethodBase) {
+        #    $definition += $getMethodDefinition.Invoke($adapterType, @($name, $m, 0))
+        #}
+        
+        #$definition -join ", "
     }
 
     # computes modifiers for a memberdefinition instance (public, private, internal, static etc)
@@ -66,13 +78,19 @@ $SCRIPT:formatHelperFunctions = {
         # modifiers are cached in exported function description
         Write-Verbose "getting function description for $($Member.psbase.name)"
         
-        try {
-            $description = (get-item function:"$($Member.psbase.name)").Description
-            if ($description) {
-                $description.split(":")[0]
+        switch ($member.psbase.MemberType) {            
+            { @("ScriptMethod","ScriptProperty") -contains $_ } {
+                try {
+                    $description = (get-item function:"$($Member.psbase.name)").Description
+                    if ($description) {
+                        $description.split(":")[0]
+                    } else {
+                        "-"
+                    }
+                } catch { "-" }
             }
-        } catch { "-" }
-
+            default { "public" }
+        }
     }
 
     # computes member type for a memberdefinition (e.g. replaces ScriptProperty with Field or Property
