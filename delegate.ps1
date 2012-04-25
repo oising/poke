@@ -167,14 +167,15 @@ For a method with no overloads, we will choose the default method and create a c
                     
                     # replace desired with matching overload parameter types
                     #$ParameterType = $methodInfo.GetParameters().ParameterType
-                    $DelegateType = ("action[{0}]" -f ($ParameterType -join ",")) -as [type]
+                    $DelegateType = ("action[{0}]" -f (($ParameterType|%{"[{0}]" -f $_}) -join ",")) -as [type]
                 }
             } else {
                 # func<...>
 
                 # replace desired with matching overload parameter types
-                #$ParameterType = $methodInfo.GetParameters().ParameterType
-                $DelegateType = ("func[{0}]" -f (($ParameterType + $methodInfo.ReturnType) -join ",")) -as [type]
+                # need to wrap each type parameter in [ and ] for cases like int[] as "func[int[], int]" is invalid
+                # the correct format is "func[[int[]], [int]]" even though "func[int,int]" is fine.
+                $DelegateType = ("func[{0}]" -f ((($ParameterType + $methodInfo.ReturnType)|% {"[{0}]" -f $_}) -join ",")) -as [type]
             }                        
         }
         Write-Verbose $DelegateType
