@@ -1,6 +1,6 @@
 ﻿###########################################
 #
-#             POKE Toolkit 0.3
+#             POKE Toolkit 1.0
 #             By Oisin Grehan (MVP)
 #
 ###########################################
@@ -95,7 +95,7 @@ $SCRIPT:formatHelperFunctions = {
         )
         $type.GetConstructors("public,nonpublic,instance") | % {
             ".ctor ({0})" -f (($_.getparameters() | % {
-                "{0} {1}" -f [microsoft.powershell.tostringcodemethods]::type($_.parametertype)<#.split(",")[0]#>, $_.name
+                "{0} {1}" -f [microsoft.powershell.tostringcodemethods]::type($_.parametertype), $_.name
             }) -join ", ")
         }
     }
@@ -108,7 +108,7 @@ $SCRIPT:formatHelperFunctions = {
         )
         # let powershell do the work
         $mi = $miCtor.Invoke(@($MethodInfo, 0))
-        $miDefinition.getvalue($mi)
+        $miDefinition.getvalue($mi, @()) # 4.0 compat
     }
 
     function Get-MemberDefinition {
@@ -186,14 +186,6 @@ $SCRIPT:formatHelperFunctions = {
                 $Member.psbase.definition
             }
         }
-
-        #$definition = @()
-
-        #foreach ($m in $MethodBase) {
-        #    $definition += $getMethodDefinition.Invoke($adapterType, @($name, $m, 0))
-        #}
-        
-        #$definition -join ", "
     }
 
     # computes modifiers for a memberdefinition instance (public, private, internal, static etc)
@@ -308,15 +300,14 @@ $SCRIPT:initializer = {
 
     foreach ($method in @($methodInfos|sort name -unique)) {
 
-        $methodName = $method.name
-        #$returnType = [Microsoft.PowerShell.ToStringCodeMethods]::type($method.returnType).split(",")[0] # trim fully qualified types
+        $methodName = $method.name        
 
         write-verbose "Creating method $methodname`(...`); building method definitions..."
         $overloads = ($methodInfos|? name -eq $methodName|% { Get-MethodDefinition $_ }) -join ", "
 
         # psscriptmethod ignores outputtype - maybe this will get fixed in later releases of ps?
-        # ultimately it's of dubious use for methods as overloads may differ in return type
-        # of course they must have differing parameters too as a method cannot differ _only_ by return type.
+        # ultimately it's of dubious use for methods as overloads may differ in return type.
+        # of course, they must have differing parameters too as a method cannot differ _only_ by return type.
         $definition = new-item function:$methodName -value ([scriptblock]::create("
             # cache overloads in description attribute which is easily retrieved from this
             # scriptblock's attributes property when emitting memberdefinition definition
@@ -613,16 +604,13 @@ function Add-Fields {
     foreach ($field in ($fields|limit-specialmember|sort name)) {
         
         # clean up type string for generics and accelerated types
-        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType)<#.split(",")[0]#> # trim fully qualified types
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType)
 
         $modifiers = Get-Modifier $field
 
         # close over field and instance vars but insert literal for fieldtype
         $getter = [scriptblock]::create(
             "[componentmodel.description('Field*:$modifiers')][outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
-        
-        # stash some metadata on the getter
-        #$getter.Attributes.Add((new-object System.ComponentModel.DescriptionAttribute "Field*"))
 
         # declared readonly?
         if ($field.IsInitOnly) {
@@ -667,16 +655,17 @@ function Add-Properties {
     }
     $properties = $type.getproperties($flags)
     $psobject = $baseObject.psobject
-    
 
     # add properties
     foreach ($property in ($properties|limit-specialmember|sort name)) {
-
+       
         # clean up type string for generics and accelerated types
-        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType)<#.split(",")[0]#> # trim fully qualified output
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType)
 
-        $getmethod = $property.GetMethod
-        $setmethod = $(if ($property.CanWrite) { $property.SetMethod } else { $getmethod })
+        write-verbose ("property: {0} {1} {{ ... }}" -f $outputtype, $property.name)
+
+        $getmethod = $property.GetGetMethod(<# nonpublic: #>$true)  # 4.0 -- 4.5 can use GetMethod property
+        $setmethod = $(if ($property.CanWrite) { $property.GetSetMethod(<# nonpublic: #>$true) } else { $getmethod }) # 4.0 -- 4.5 can use SetMethod property
 
         if ((Get-Modifier $getmethod) -eq (Get-Modifier $setmethod)) {
             # readonly prop, or getter/setter have same visibility
@@ -689,18 +678,16 @@ function Add-Properties {
 
         # property getter
         $getter = [scriptblock]::create(
-            "[componentmodel.description('Property*:$modifiers')][outputtype('$outputType')]param(); `$property.GetValue(`$self)").GetNewClosure()
+            "[componentmodel.description('Property*:$modifiers')][outputtype('$outputType')]param(); `$property.GetValue(`$self, @())").GetNewClosure()
+            #"[componentmodel.description('Property*:$modifiers')][outputtype('$outputType')]param(); if (`$value = `$property.GetValue(`$self, @())) { peek `$value }").GetNewClosure()
 
-        # stash some metadata on the getter scriptblock
-        #$getter.Attributes.Add((new-object System.ComponentModel.DescriptionAttribute "Property*"))
-        
-        # i don't account for setter-only properties
+        # I don't account for setter-only properties
         if (-not $property.CanWrite) {
             $propertyDef = New-Object management.automation.psscriptproperty $property.Name, $getter
         } else {
             # TODO: strongly type $value parameter in setter
             # property setter
-            $setter = { param($value); $property.SetValue($self, $value) }.GetNewClosure()            
+            $setter = { param($value); $property.SetValue($self, $value, @()) }.GetNewClosure()
             $propertyDef = New-Object management.automation.psscriptproperty $property.Name, $getter, $setter
         }
         write-verbose "Adding $flags property $($property.name)"
@@ -728,7 +715,7 @@ function Find-Type {
     $matches = @()
     
     $assemblies | % {
-        write-verbose "Searching $($_.getname().name)..."
+        #write-verbose "Searching $($_.getname().name)..."
         
         $match = $_.gettype($typename, $false, !$CaseSensitive)
         if ($match) {
@@ -749,41 +736,34 @@ function Find-Type {
 ############################################
 
 function New-ObjectProxy {
-    [cmdletbinding(defaultparametersetname="typeName")]
-    param(                
+    [cmdletbinding(defaultparametersetname="inputobject")]
+    param(
         [parameter(position=0, mandatory=$true, parametersetname="typeName")]
         [validatenotnullorempty()]
-        [string]$TypeName,
+        [string]$Name,
         
-        [parameter(position=0, mandatory=$true, parametersetname="type")]
-        [validatenotnull()]
-        [type]$Type,
-
         [parameter(parametersetname="typeName")]
         [switch]$CaseSensitive,
-        
-        [parameter(position=0, mandatory=$true, parametersetname="instance")]
+
+        [parameter(valuefrompipeline=$true, parametersetname="inputobject", position="0")]
         [validatenotnull()]
-        [object]$Instance
+        $InputObject
     )
+
+    if ($PSCmdlet.ParameterSetName -eq "inputobject") {
     
-    if ($PSCmdlet.ParameterSetName -eq "instance") {
-    
-        New-InstanceProxy -instance $instance
-    
-    } else {
-        
-        if ($PSCmdlet.ParameterSetName -eq "type") {
-            $typeName = $type.fullname
+        if ($InputObject -is [type]) {
+            New-TypeProxy -TypeName $InputObject.fullname -CaseSensitive
+        } else {
+            New-InstanceProxy -Instance $InputObject
         }
-        
-        New-TypeProxy -TypeName $TypeName -CaseSensitive:$CaseSensitive
+            
+    } else {        
+        New-TypeProxy -TypeName $Name -CaseSensitive:$CaseSensitive
     }
 
     Write-Progress -id 1 -Activity "Poke" -Completed
 }
-
-
 
 <#
 Update-TypeData -Force -TypeName System.Management.Automation.PSMethod -MemberType ScriptMethod -MemberName CreateDelegate -Value {

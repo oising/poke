@@ -39,7 +39,7 @@ function Assert-True {
 #
 
 assert-true {
-    $proxy = peek -typename "System.Text.StringBuilder";
+    $proxy = peek -name System.Text.StringBuilder
     ($proxy | gm | measure).count -eq 15
 } -name "type proxy"
 
@@ -63,7 +63,7 @@ assert-true {
 } -name "instance method with overloads"
 
 assert-true {
-    $proxy = peek system.string
+    $proxy = peek -name system.string
     $s = $proxy.format("hello, {0}", [object[]]@("world"))
     $s -eq "hello, world"
 } -name "static method with overloads"
