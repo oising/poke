@@ -1,4 +1,5 @@
-﻿ipmo .\poke.psd1 -force
+﻿cd $psscriptroot
+ipmo .\poke.psd1 -force
 
 #$VerbosePreference = "Continue"
 $error.Clear()
