@@ -35,6 +35,34 @@ filter Limit-SpecialMember {
     }
 }
 
+function Get-Modifier {
+    param(
+        [parameter(mandatory=$true)]
+        [validatenotnull()]
+        $Member
+    )
+
+    $modifiers = ""
+
+    try {
+        if ($Member.ispublic) {
+            $modifiers = "public"
+        } elseif ($Member.isFamily) {
+            $modifiers = "protected"
+        } elseif ($Member.isFamilyOrAssembly) {
+            $modifiers = "protected internal"
+        } elseif ($Member.isAssembly) {
+            $modifiers = "internal"
+        } elseif ($Member.isPrivate) {
+            $modifiers = "private"
+        }
+    } catch {
+        $modifiers = "ERROR"
+    }
+
+    $modifiers
+}
+
 $SCRIPT:formatHelperFunctions = {
     # These functions are defined within module scope for a single instance or type proxy.
 
@@ -67,7 +95,7 @@ $SCRIPT:formatHelperFunctions = {
         )
         $type.GetConstructors("public,nonpublic,instance") | % {
             ".ctor ({0})" -f (($_.getparameters() | % {
-                "{0} {1}" -f [microsoft.powershell.tostringcodemethods]::type($_.parametertype).split(",")[0], $_.name
+                "{0} {1}" -f [microsoft.powershell.tostringcodemethods]::type($_.parametertype)<#.split(",")[0]#>, $_.name
             }) -join ", ")
         }
     }
@@ -81,10 +109,6 @@ $SCRIPT:formatHelperFunctions = {
         # let powershell do the work
         $mi = $miCtor.Invoke(@($MethodInfo, 0))
         $miDefinition.getvalue($mi)
-    }
-
-    function Get-PropertyOrFieldDefinition {
-        "Proxy Property/Field"
     }
 
     function Get-MemberDefinition {
@@ -104,19 +128,51 @@ $SCRIPT:formatHelperFunctions = {
             
             ScriptProperty {
                 # Property* or Field*
-                $baseMemberType = $member.MemberType # grab _our_ ETS value (not using psbase!)
+                $baseMemberType = $member.MemberType.split(":")[0] # grab _our_ ETS value (not using psbase!)
+                $getset = $(if ($baseMemberType -eq "Property*") { " { get; set; }" })
 
-                "{0}{1} {2}" -f "", $proxy.psobject.Members[$member.Name].TypeNameOfValue, $Member.Name
+                "{0}{1} {2}{3}" -f "", $proxy.psobject.Members[$member.Name].TypeNameOfValue, $Member.Name, $getset
             }
 
             ScriptMethod {
-                # retrieve from scriptmethod scriptblock attributes
-                $body = $proxy.psobject.members[$member.Name].script
-                $description = $body.Attributes.Find( { $args[0] -is [System.ComponentModel.DescriptionAttribute] })
-                if ($description) {
-                    $description.description
-                } else {
-                    "..."
+                switch ($member.Name) {
+                    __CreateInstance {
+                        $baseObject = $Proxy.__GetBaseObject()
+                        if ($baseObject -is [type]) {
+                            (Get-ConstructorDefinition -Type $baseObject) -join ", "
+                        } else {
+                            (Get-ConstructorDefinition -Type $baseObject.gettype()) -join ", "
+                        }                        
+                    }
+                
+                    __GetBaseObject {
+                        $baseObject = $Proxy.__GetBaseObject()
+                        if ($baseObject -is [type]) {
+                            "type __GetBaseObject()"
+                        } else {
+                            "{0} __GetBaseObject()" -f [Microsoft.PowerShell.ToStringCodeMethods]::Type($baseObject.gettype())
+                        }
+                    }
+                
+                    __GetModuleInfo {
+                        "psmoduleinfo __GetModuleInfo()"
+                    }
+                    
+                    ToString {
+                        "string ToString()"
+                    }
+
+                    default {
+                        # retrieve from scriptmethod scriptblock attributes
+                        $body = $proxy.psobject.members[$member.Name].script
+                        $description = $body.Attributes.Find( { $args[0] -is [System.ComponentModel.DescriptionAttribute] })
+                        if ($description) {
+                            # overloads cached in description attribute above param block
+                            $description.description
+                        } else {
+                            "..."
+                        }
+                    }
                 }
             }
             
@@ -153,14 +209,20 @@ $SCRIPT:formatHelperFunctions = {
         # modifiers are cached in exported function description
         Write-Verbose "getting function description for $($Member.psbase.name)"
         
-        switch ($member.psbase.MemberType) {            
-            { @("ScriptMethod","ScriptProperty") -contains $_ } {
+        switch ($member.psbase.MemberType) {
+            ScriptProperty {
+                $getter = $proxy.psobject.members[$member.Name].getterscript
+                $description = $getter.Attributes.Find( { $args[0] -is [System.ComponentModel.DescriptionAttribute] })
+                $description.description.split(":")[1]
+            }
+
+            ScriptMethod {
                 try {
                     $description = (get-item function:"$($Member.psbase.name)").Description
                     if ($description) {
                         $description.split(":")[0]
                     } else {
-                        # special case ToString 
+                        # special cases
                         if ($member.psbase.name -eq "ToString") {
                             "public"
                         } else {
@@ -194,7 +256,7 @@ $SCRIPT:formatHelperFunctions = {
                 # the proxied member type is cached in a description attribute on the scriptproperty's getterscript (e.g. field/property)
                 $getter = $proxy.psobject.members[$member.Name].getterscript
                 $description = $getter.Attributes.Find( { $args[0] -is [System.ComponentModel.DescriptionAttribute] })
-                $description.description
+                $description.description.split(":")[0]
             }
             ScriptMethod {
                 # add asterisk to differentiate between methods on the psobject (gettype etc) and proxied members
@@ -297,30 +359,22 @@ $SCRIPT:initializer = {
         # isfamily: protected
         # isfamilyORassembly: protected internal
         # isassembly: internal
-        # isprivate: private
-        
-        # methodattributes are a bit obtuse
-        #$definition.description = $method.attributes.tostring() + ":(overloads)"
+        # isprivate: private       
 
-        $modifiers = @()
+        $modifiers = ""
         if ($method.ispublic) {
-            $modifiers += "public"
+            $modifiers = "public"
         } elseif ($method.isFamily) {
-            $modifiers += "protected"
+            $modifiers = "protected"
         } elseif ($method.isFamilyOrAssembly) {
-            $modifiers += "protected internal"
+            $modifiers = "protected internal"
         } elseif ($method.isAssembly) {
-            $modifiers += "internal"
+            $modifiers = "internal"
         } elseif ($method.isPrivate) {
-            $modifiers += "private"
+            $modifiers = "private"
         }
         
-        
-        #if ($method.isstatic) {
-        #    $modifiers += "static"
-        #}
-        
-        $definition.description = ($modifiers -join ", ") + ":" + $(if ($method.isstatic) { "static" } else { "" })
+        $definition.description = $modifiers + ":" + $(if ($method.isstatic) { "static" } else { "" })
         
         export-modulemember $methodname
     } # /foreach method
@@ -382,8 +436,7 @@ function New-TypeProxy {
             $ctor = $type.GetConstructor("Public,NonPublic,Instance", $null, $types, $null)
 
             if (-not $ctor) {
-                write-warning "No matching constructor found. Available constructors:"                
-                #$type.getconstructors("Public,NonPublic,Instance") | % { write-host -ForegroundColor Green " $_" }
+                write-warning "No matching constructor found. Available constructors:"
                 Get-ConstructorDefinition $type | % { write-host -ForegroundColor green " $_" }
                 return 
             }
@@ -420,9 +473,7 @@ function New-TypeProxy {
         
     } -args $type, $initializer, $formatHelperFunctions
     
-    if ($proxy) {
-        
-        # TODO: fix up overloads
+    if ($proxy) {        
     
         $proxy.psobject.typenames.insert(0, "Pokeable.Object")
         $proxy.psobject.typenames.insert(0, "Pokeable.System.RuntimeType#$($type.fullname)")
@@ -431,7 +482,7 @@ function New-TypeProxy {
         Add-properties $proxy "Public,NonPublic,DeclaredOnly,Static" > $null
 
         write-verbose "Registering in proxyTable"
-        $proxyTable[$proxy.tostring()] = $proxy #.__GetModuleInfo()
+        $proxyTable[$proxy.tostring()] = $proxy
 
         $proxy
     }
@@ -460,8 +511,6 @@ function New-InstanceProxy {
     $instanceId = [guid]::NewGuid()
         
     $type = $instance.GetType()
-    
-    #$methods = $type.GetMethods("Public,NonPublic,DeclaredOnly,Instance")|?{!$_.isspecialname}
         
     $proxy = new-module -ascustomobject -name "Pokeable.$($type.fullname)#$instanceId" -verbose {
         param(
@@ -493,18 +542,13 @@ function New-InstanceProxy {
 
         function __GetBaseObject {
             $self
-        }      
-        
-        function __Help {
-            param([string]$MethodName)
-            throw "Not implemented."
         }
         
         function ToString() {
             "Pokeable.$($type.fullname)#$instanceId"
         }
 
-        export-modulemember __GetBaseObject, __GetModuleInfo, ToString #, __Help
+        export-modulemember __GetBaseObject, __GetModuleInfo, ToString
 
         # register dispose handler on module remove
         $ExecutionContext.SessionState.Module.OnRemove = {
@@ -520,20 +564,7 @@ function New-InstanceProxy {
     
     if ($proxy) {
     
-        $psobject = $proxy.psobject
-        
-        try {
-            <# fix up overload definitions ;-)
-            foreach ($method in ($methods|group name|sort name)) {
-                $overloads = $psobject.methods[$method.name].overloaddefinitions
-                write-verbose $($method.name + " has " + $method.group.count + " overload(s)")
-                $overloads.clear()
-                $method.group | % { $overloads.add($_) }
-            }
-            #>
-        } catch {
-            write-warning "Failed to fix up overloads: $_"        
-        }
+        $psobject = $proxy.psobject        
         
         $psobject.typenames.insert(0, "Pokeable.Object")
         $psobject.typenames.insert(0, "Pokeable.$($type.fullname)#$instanceId")
@@ -542,7 +573,7 @@ function New-InstanceProxy {
         Add-properties $proxy "Public,NonPublic,DeclaredOnly,Instance" > $null
 
         write-verbose "Registering in proxyTable"
-        $proxyTable[$proxy.tostring()] = $proxy #.__GetModuleInfo()
+        $proxyTable[$proxy.tostring()] = $proxy
                 
         $proxy
     }
@@ -582,11 +613,13 @@ function Add-Fields {
     foreach ($field in ($fields|limit-specialmember|sort name)) {
         
         # clean up type string for generics and accelerated types
-        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType).split(",")[0] # trim fully qualified types
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType)<#.split(",")[0]#> # trim fully qualified types
+
+        $modifiers = Get-Modifier $field
 
         # close over field and instance vars but insert literal for fieldtype
         $getter = [scriptblock]::create(
-            "[componentmodel.description('Field*')][outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
+            "[componentmodel.description('Field*:$modifiers')][outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
         
         # stash some metadata on the getter
         #$getter.Attributes.Add((new-object System.ComponentModel.DescriptionAttribute "Field*"))
@@ -640,11 +673,23 @@ function Add-Properties {
     foreach ($property in ($properties|limit-specialmember|sort name)) {
 
         # clean up type string for generics and accelerated types
-        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType).split(",")[0] # trim fully qualified output
+        $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType)<#.split(",")[0]#> # trim fully qualified output
+
+        $getmethod = $property.GetMethod
+        $setmethod = $(if ($property.CanWrite) { $property.SetMethod } else { $getmethod })
+
+        if ((Get-Modifier $getmethod) -eq (Get-Modifier $setmethod)) {
+            # readonly prop, or getter/setter have same visibility
+            $modifiers = Get-Modifier $getmethod
+        } else {
+            # getter/setter have different visibility
+            # TODO: highlight this in definition with { private get; internal set; }
+            $modifiers = "-"
+        }
 
         # property getter
         $getter = [scriptblock]::create(
-            "[componentmodel.description('Property*')][outputtype('$outputType')]param(); `$property.GetValue(`$self)").GetNewClosure()
+            "[componentmodel.description('Property*:$modifiers')][outputtype('$outputType')]param(); `$property.GetValue(`$self)").GetNewClosure()
 
         # stash some metadata on the getter scriptblock
         #$getter.Attributes.Add((new-object System.ComponentModel.DescriptionAttribute "Property*"))
@@ -734,6 +779,8 @@ function New-ObjectProxy {
         
         New-TypeProxy -TypeName $TypeName -CaseSensitive:$CaseSensitive
     }
+
+    Write-Progress -id 1 -Activity "Poke" -Completed
 }
 
 
