@@ -129,6 +129,9 @@ $SCRIPT:formatHelperFunctions = {
             ScriptProperty {
                 # Property* or Field*
                 $baseMemberType = $member.MemberType.split(":")[0] # grab _our_ ETS value (not using psbase!)
+
+                # TODO: show {get;} or {get;set;} depending on readonly or not
+                # TODO: show modifiers for get/set if different; e.g. {get;private set;}
                 $getset = $(if ($baseMemberType -eq "Property*") { " { get; set; }" })
 
                 "{0}{1} {2}{3}" -f "", $proxy.psobject.Members[$member.Name].TypeNameOfValue, $Member.Name, $getset
@@ -736,6 +739,46 @@ function Find-Type {
 ############################################
 
 function New-ObjectProxy {
+<#
+.SYNOPSIS
+Return a type or instance proxy of a managed type
+
+.DESCRIPTION
+Return a type or instance proxy of a managed type, exposing all non-public fields, properties and methods.
+Methods can be invoked, fields written to and private properties set. To see modifiers and method definitions
+use the standard command of Get-Member. Use the following meta-methods to work with proxies:
+
+* __CreateInstance() Create an instance of a proxied System.Type.
+
+* __GetBaseObject() Get the proxied System.Type or instance.
+
+.PARAMETER InputObject
+Accepts a Type or instance from the pipeline. Can also accept input as the first positional parameter.
+
+.PARAMETER Name
+Accepts the name of a Type to proxy, e.g. system.text.stringbuilder.
+
+.PARAMETER CaseSensitive
+Used in conjunction with -Name to specific a case-sensitive type name.
+
+.EXAMPLE
+$ise = peek $psise
+$ise | get-member
+
+Get a live instance of the ISE's $psise global, and examine and manipulate its internal structures.
+
+.EXAMPLE
+$job = start-job { 42 } | peek
+$job | gm
+
+Get an instance of psremotingjob and view all private, internal, protected and public members.
+
+.EXAMPLE
+$throttlemanager = peek (start-job { 42 } | peek).throttlemanager
+$throttlemanager.ThrottleLimit = 64
+
+Get an instance of a job's internal throttle manager and increse the throttle limit from 32 to 64. 
+#>
     [cmdletbinding(defaultparametersetname="inputobject")]
     param(
         [parameter(position=0, mandatory=$true, parametersetname="typeName")]
@@ -818,5 +861,12 @@ Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -Member
     try { invoke-formathelper $this get-memberdefinition -default $this.psbase.definition } catch { write-warning "get-memberdefinition: $_" }
 } -Force
 
+# shortcut for $o | peek | gm
+function Get-PokeMember { $input | peek | Get-Member }
+
+#
+#  Exports
+#
+
 new-alias -Name peek -Value New-ObjectProxy -Force
-Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate, Invoke-FormatHelper
+Export-ModuleMember -Alias peek -Function New-ObjectProxy, New-TypeProxy, New-InstanceProxy, Get-Delegate, Invoke-FormatHelper, Get-PokeMember

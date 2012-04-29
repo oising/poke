@@ -1,0 +1,13 @@
+﻿
+*** Initial Release 1.0 *** 2012/04/26
+
+fixes:
+- removed unintentional dependencies on .NET 4.5 
+- added value-from-pipeline support for peek (new-objectproxy)
+
+known issues:
+- get-member output for property with differing get/set visibility does not show modifier
+
+
+
+
