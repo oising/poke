@@ -181,9 +181,11 @@ For a method with no overloads, we will choose the default method and create a c
         Write-Verbose $DelegateType
 
         if ($flags -band [reflection.bindingflags]::Instance) {
-            $methodInfo.createdelegate($DelegateType, $base)
+            #$methodInfo.createdelegate($DelegateType, $base) # 4.5
+            [delegate]::CreateDelegate($delegatetype, $base, $methodInfo, <#throwOnBindFailure:#>$true)
         } else {
-            $methodInfo.createdelegate($DelegateType)
+            [delegate]::CreateDelegate($delegatetype, $methodInfo, <#throwOnBindFailure:#>$true)
+            #$methodInfo.createdelegate($DelegateType) # 4.5
         }
     }
 }
