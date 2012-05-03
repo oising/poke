@@ -71,8 +71,18 @@ $SCRIPT:formatHelperFunctions = {
     
     # cache some often used members for performance reasons
     $SCRIPT:miType = [psobject].assembly.gettype("System.Management.Automation.MethodInformation")
-    $SCRIPT:miCtor = $mitype.GetConstructor("nonpublic,instance", $null, [type[]]@([reflection.methodinfo], [int]), $null)
+    
+    $SCRIPT:miCtor = $mitype.GetConstructor("nonpublic,instance", $null, [type[]]@([reflection.methodinfo], [int]), $null)    
     $SCRIPT:miDefinition = $mitype.GetProperty("methodDefinition", [reflection.bindingflags]"instance,nonpublic")
+
+    $SCRIPT:fieldCall = $false
+
+    # workaround
+    if (-not $miDefinition) {
+        $SCRIPT:miCtor = $mitype.GetConstructor("nonpublic,instance", $null, [type[]]@([string],[reflection.methodinfo], [int]), $null)
+        $SCRIPT:miDefinition = $mitype.GetField("methodDefinition", [reflection.bindingflags]"instance,nonpublic")    
+        $SCRIPT:fieldCall = $true
+    }
 
     # used in dynamic modules (proxies) for method filter
     filter Limit-SpecialMember {
@@ -107,8 +117,13 @@ $SCRIPT:formatHelperFunctions = {
             [reflection.methodinfo]$MethodInfo
         )
         # let powershell do the work
-        $mi = $miCtor.Invoke(@($MethodInfo, 0))
-        $miDefinition.getvalue($mi, @()) # 4.0 compat
+        if ($SCRIPT:fieldCall) {
+            $mi = $miCtor.Invoke(@($methodinfo.name, $MethodInfo, 0))
+            $miDefinition.getvalue($mi) # field call
+        } else {
+            $mi = $miCtor.Invoke(@($MethodInfo, 0))
+            $miDefinition.getvalue($mi, @()) # prop call
+        }
     }
 
     function Get-MemberDefinition {
