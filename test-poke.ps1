@@ -1,4 +1,6 @@
-﻿cd $psscriptroot
+﻿cls
+
+cd $psscriptroot
 ipmo .\poke.psd1 -force
 
 #$VerbosePreference = "Continue"
