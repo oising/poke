@@ -1,7 +1,7 @@
-﻿cls
+﻿Clear-Host
 
-cd $psscriptroot
-ipmo .\poke.psd1 -force
+Set-Location $psscriptroot
+Import-Module .\poke.psd1 -force
 
 #$VerbosePreference = "Continue"
 $error.Clear()
@@ -14,17 +14,20 @@ function Assert-True {
 
         [parameter(position=1)]
         [validatenotnullorempty()]
-        [string]$Name = "Assert-True"
+        [string]$Name = 'Assert-True'
     )    
     $eap = $ErrorActionPreference
-    Write-Host -NoNewline "Assert-True [ $Name ] "
+    
+    $detail = "Assert-True [ $Name ] "
+    Write-Host -NoNewline $detail
+
     try {
-        $erroractionpreference = "stop"
+        $erroractionpreference = 'stop'
         if ((& $script) -eq $true) {
-            write-host -ForegroundColor Green "[PASS]"
+            write-host -ForegroundColor Green "$(' ' * (100 - $detail.Length))[PASS]"
             return
         }
-        $reason = "Assert failed."
+        $reason = 'Assert failed.'
     }
     catch {
         $reason = "Error: $_"
@@ -32,7 +35,7 @@ function Assert-True {
     finally {
         $ErrorActionPreference = $eap
     }
-    write-host -ForegroundColor Red "[FAIL] " -NoNewline
+    write-host -ForegroundColor Red "$(' ' * (100 - $detail.Length))[FAIL] " -NoNewline
     write-host "Reason: '$reason'"
 }
 
@@ -42,33 +45,33 @@ function Assert-True {
 
 assert-true {
     $proxy = peek -name System.Text.StringBuilder
-    ($proxy | gm | measure).count -eq 15
-} -name "type proxy"
+    ($proxy | Get-Member | Measure-Object).count -eq 15
+} -name 'type proxy'
 
 assert-true {
     $sb = new-object System.Text.StringBuilder
     $proxy = peek $sb
-    ($proxy | gm | measure).count -eq 38
-} -name "instance proxy"
+    ($proxy | Get-Member | Measure-Object).count -eq 38
+} -name 'instance proxy'
 
 assert-true {
     $sb = new-object System.Text.StringBuilder
     $proxy = peek $sb
     $proxy.length -eq 0
-} -name "instance property"
+} -name 'instance property'
 
 assert-true {
     $sb = new-object System.Text.StringBuilder
     $proxy = peek $sb
     $proxy.append(42) > $null
     $proxy.length -eq 2
-} -name "instance method with overloads"
+} -name 'instance method with overloads'
 
 assert-true {
     $proxy = peek -name system.string
-    $s = $proxy.format("hello, {0}", [object[]]@("world"))
-    $s -eq "hello, world"
-} -name "static method with overloads"
+    $s = $proxy.format('hello, {0}', [object[]]@('world'))
+    $s -eq 'hello, world'
+} -name 'static method with overloads'
 
 
 #
@@ -77,7 +80,7 @@ assert-true {
 
 assert-true {
     $delegate = [string]::format | Get-Delegate -Delegate 'func[string,object,string]'
-    $delegate.invoke("hello, {0}", "world") -eq "hello, world"
+    $delegate.invoke('hello, {0}', 'world') -eq 'hello, world'
 } -name "[string]::format | get-delegate -delegate 'func[string,object,string]'"
 
 assert-true {
@@ -87,28 +90,28 @@ assert-true {
 
 assert-true {
     $delegate = [string]::format | Get-Delegate string,string
-    $delegate.invoke("hello, {0}", "world") -eq "hello, world"
-} -name "[string]::format | get-delegate string,string"
+    $delegate.invoke('hello, {0}', 'world') -eq 'hello, world'
+} -name '[string]::format | get-delegate string,string'
 
 assert-true {
     $delegate = [console]::beep | Get-Delegate @()
     $delegate -is [action]
-} -name "[console]::beep | get-delegate @()"
+} -name '[console]::beep | get-delegate @()'
 
 assert-true {
     $delegate = [console]::beep | Get-Delegate -DelegateType action
     $delegate -is [action]
-} -name "[console]::beep | Get-Delegate -DelegateType action"
+} -name '[console]::beep | Get-Delegate -DelegateType action'
 
 assert-true {
     $delegate = [string]::IsNullOrEmpty | get-delegate
     $delegate -is [func[string,bool]]
-} -name "[string]::IsNullOrEmpty | get-delegate # single overload"
+} -name '[string]::IsNullOrEmpty | get-delegate # single overload'
 
 assert-true {
     $delegate = [string]::IsNullOrEmpty | get-delegate string
     $delegate -is [func[string,bool]]
-} -name "[string]::IsNullOrEmpty | get-delegate string # single overload"
+} -name '[string]::IsNullOrEmpty | get-delegate string # single overload'
 
 #
 # instance methods
@@ -126,7 +129,18 @@ assert-true {
     $delegate -is [System.Func[string,object,object,System.Text.StringBuilder]]
 } -name "`$sb.AppendFormat | get-delegate string, int, int"
 
-$VerbosePreference = "SilentlyContinue"
+
+#
+# readonly field
+#
+
+assert-true {
+  $re = peek ([regex])
+  $re.DefaultMatchTimeout = New-TimeSpan -Seconds 42
+  $re.DefaultMatchTimeout.Seconds -eq 42
+} -name 'readonly static field (setter)'
+
+$VerbosePreference = 'SilentlyContinue'
 
 $s = peek system.string
-$s | gm | sort modifier | ft -group modifier
+$s | Get-Member | Sort-Object modifier | Format-Table -group modifier
