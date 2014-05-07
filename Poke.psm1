@@ -39,7 +39,7 @@ function Get-Modifier {
     param(
         [parameter(mandatory=$true)]
         [validatenotnull()]
-        $Member
+        [System.Reflection.MemberInfo]$Member
     )
 
     $modifiers = ""
@@ -59,6 +59,14 @@ function Get-Modifier {
     } catch {
         $modifiers = "ERROR"
     }
+    
+    # declared readonly?
+    if ($member.MemberType -eq "Field") {
+      $fieldInfo = [system.reflection.fieldinfo]$member
+      if ($fieldInfo.IsInitOnly) {
+        $modifiers += " readonly"
+      }
+    }    
 
     $modifiers
 }
@@ -160,7 +168,7 @@ $SCRIPT:formatHelperFunctions = {
                             (Get-ConstructorDefinition -Type $baseObject) -join ", "
                         } else {
                             (Get-ConstructorDefinition -Type $baseObject.gettype()) -join ", "
-                        }                        
+                        }
                     }
                 
                     __GetBaseObject {
@@ -630,16 +638,13 @@ function Add-Fields {
         $getter = [scriptblock]::create(
             "[componentmodel.description('Field*:$modifiers')][outputtype('$outputtype')]param(); `$field.GetValue(`$self)").GetNewClosure()
 
-        # declared readonly?
-        if ($field.IsInitOnly) {
-            $fieldDef = New-Object management.automation.psscriptproperty $field.Name, $getter
-        } else {
-            # TODO: strongly type $value parameter in setter
-            $setter = { param($value); $field.SetValue($self, $value) }.GetNewClosure()
-            
-            $fieldDef = New-Object management.automation.psscriptproperty $field.Name, $getter, $setter
-        }
-        write-verbose "Adding $flags field $($field.name)"
+      
+        # if readonly then IsInitOnly would be flagged, but reflection can still invoke the setter so we ignore
+        # TODO: strongly type $value parameter in setter
+        $setter = { param($value); $field.SetValue($self, $value) }.GetNewClosure()            
+        $fieldDef = New-Object management.automation.psscriptproperty $field.Name, $getter, $setter
+
+        write-verbose "Adding $flags field $($field.name) InitOnly: $($field.isinitonly)"
         
         $psobject.properties.add($fieldDef)
     }
