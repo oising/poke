@@ -12,7 +12,7 @@
 RootModule = 'Poke.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.0'
+ModuleVersion = '1.0.0.2'
 
 # ID used to uniquely identify this module
 GUID = 'cba2bd6c-5303-479e-bbed-6fd997ea5d31'
