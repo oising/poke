@@ -27,7 +27,7 @@ CompanyName = 'MVP'
 Copyright = '(c) 2012 Oisin Grehan. All rights reserved.'
 
 # Description of the functionality provided by this module
-# Description = ''
+Description = "A PowerShell module for working with non-public types and instances. Ideal for live debugging of complex .net applications, or even introspection against powershell itself. Think open brain surgery for .NET."
 
 # Minimum version of the Windows PowerShell engine required by this module
 PowerShellVersion = '3.0'
