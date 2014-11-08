@@ -1,23 +1,22 @@
-== Poke ==
+# Poke
 
 Here you'll find examples of how to peek and poke objects using the Poke module.
 
-== Version History ==
+### Version History
 
 * 1.0.2 - readonly fields are now settable like regular fields
 * 1.0.1 - Compatibility fixes for v3 beta / .net 4.5
 * 1.0   - Initial release
     
-=== Examples ===
+### Examples
 
-{{{
-#!powershell
+```powershell
 # peek at a Job instance using pipeline syntax
 $job = start-job { 42 } | peek
 $job | get-member
-}}}
+```
 which results in the new extended output format for get-member:
-{{{
+```
    TypeName:
 Pokeable.System.Management.Automation.PSRemotingJob#676f9716-c167-47c6-ab0d-4d8cedbbe44d
 
@@ -61,17 +60,16 @@ StatusMessage                   public    Property*  string StatusMessage { get;
 throttleManager                 private   Field*     System.Management.Automation.Remoting.Thrott...
 _stopIsCalled                   private   Field*     bool _stopIsCalled
 _syncObject                     private   Field*     System.Object _syncObject
-}}}
+```
 
 You can call methods, set fields and properties (if they have setters - it doesn't matter if they're private, protected or internal.)
 
 You can proxy Types as well as instances:
-{{{
-#!powershell
+```powershell
 # proxy a public type by piping it
 $type = [text.stringbuilder] | peek
-}}}
-{{{
+```
+```
    TypeName: Pokeable.System.RuntimeType#System.Text.StringBuilder
 
 Name             Modifier MemberType Definition
@@ -91,10 +89,9 @@ MaxCapacityField private  Field*     string MaxCapacityField
 MaxChunkSize     internal Field*     int MaxChunkSize
 StringValueField private  Field*     string StringValueField
 ThreadIDField    private  Field*     string ThreadIDField
-}}}
+```
 Peeking at non-public types:
-{{{
-#!powershell
+```powershell
 # nonpublic types can't be specified using type literal
 # syntax, so in this case you should use the -name parameter
 $type = peek -name MS.Internal.Xml.XPath.XPathParser
@@ -103,15 +100,14 @@ $type = peek -name MS.Internal.Xml.XPath.XPathParser
 # are not "peeked" themselves, so you may need to peek the return value:
 $manager = peek (start-job { 42 } | peek).throttlemanager
 $manager.throttlelimit = 64 # bump throttle limit ;)
-}}}
+```
 Of course, you can peek instances too:
-{{{
-#!powershell
+```powershell
 $sb = new-object system.text.stringbuilder
 $proxy = peek $sb
 $proxy | gm
-}}}
-{{{
+```
+```
    TypeName: Pokeable.System.Text.StringBuilder#45f12364-1906-45b3-b48b-a77acd81e3f0
 
 Name                                                     Modifier MemberType Definition
@@ -154,5 +150,5 @@ m_ChunkLength                                            internal Field*     int
 m_ChunkOffset                                            internal Field*     int m_ChunkOffset
 m_ChunkPrevious                                          internal Field*     System.Text.StringBu...
 m_MaxCapacity                                            internal Field*     int m_MaxCapacity
-}}}
+```
 Have fun!
