@@ -1,5 +1,14 @@
 ﻿POKE
 
+* v1.1.0.0 (2014/02/16)
+
+fixes: 
+- two tests were failing due to silly tests against private member counts to
+  validate success;
+  
+enhancements:
+- now support invoking methods with out/ref parameters (poewrshell treats both as [ref])
+
 * v1.0.0.2 (2014/05/07)
 
 fixes:

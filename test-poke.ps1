@@ -45,13 +45,13 @@ function Assert-True {
 
 assert-true {
     $proxy = peek -name System.Text.StringBuilder
-    ($proxy | Get-Member | Measure-Object).count -eq 15
+    $proxy.psobject.typenames.contains("Pokeable.Object")
 } -name 'type proxy'
 
 assert-true {
     $sb = new-object System.Text.StringBuilder
     $proxy = peek $sb
-    ($proxy | Get-Member | Measure-Object).count -eq 38
+    $proxy.psobject.typenames.contains("Pokeable.Object")
 } -name 'instance proxy'
 
 assert-true {
@@ -113,6 +113,11 @@ assert-true {
     $delegate -is [func[string,bool]]
 } -name '[string]::IsNullOrEmpty | get-delegate string # single overload'
 
+assert-true {
+    $int = [int] | peek
+    $n = 0;
+    $int.TryParse("1", [ref]$n)
+} -name "[int]::tryparse ([string], [ref][int])"
 #
 # instance methods
 #

@@ -1,7 +1,11 @@
 ﻿###########################################
 #
-#             POKE Toolkit 1.0
+#             POKE Toolkit 1.1
 #             By Oisin Grehan (MVP)
+#
+#
+#   1.0 initial release
+#   1.1 add support for out/ref parameters
 #
 ###########################################
 
@@ -286,6 +290,20 @@ $SCRIPT:formatHelperFunctions = {
             }
         }
     }
+
+    ###
+    #
+    # ByRef helper
+    #
+    ###
+
+    filter ConvertFrom-PSReference {
+        if ([ref].IsAssignableFrom($_)) {        
+            $_.generictypearguments[0].makebyreftype()
+        } else {
+            $_
+        }
+    }
 }
 
 ############################################
@@ -339,14 +357,18 @@ $SCRIPT:initializer = {
             # scriptblock's attributes property when emitting memberdefinition definition
             [componentmodel.description('$overloads')]
             param();
-                
+
             write-verbose 'called $methodName'
             [reflection.bindingflags]`$binding = '$flags'
 
             try {
                 if ((`$overloads = @(`$baseType.getmethods(`$binding)|? name -eq '$methodname')).count -gt 1) {
                     write-verbose 'self $self ; flags: $flags ; finding best fit overload'
-                    `$types = [type]::gettypearray(`$args)
+                    `$types = [type]::gettypearray(`$args).foreach({
+                        if (`$_.basetype -eq [ref]) {
+                            `$_.generictypearguments[0].makebyreftype() # fix up [ref][int] to [int&]
+                        } else { `$_ }
+                    })
                     `$method = `$baseType.getmethod('$methodname', `$binding, `$null, `$types, `$null)
                     if (-not `$method) {
                         write-warning ""Could not find best fit overload for `$(`$types -join ',').""
@@ -355,8 +377,30 @@ $SCRIPT:initializer = {
                 } else {
                     write-verbose 'single method; no overloads'
                 }
+
+                `$inargs = new-object 'object[]' `$args.length
+                [array]::copy(`$args, `$inargs, `$args.length)
+
+                # deref [ref] to value
+                for (`$i = 0; `$i -lt `$inargs.length; `$i++) {
+                    `$elem = `$inargs[`$i]
+                    if (`$elem -is [ref]) {
+                        `$inargs[`$i] = `$elem.value
+                    }
+                }
+
                 # invoke
-                `$method.invoke(`$self, `$binding, `$null, `$args, `$null)                                    
+                write-verbose ""invoking '`$method' with: `$(`$inargs -join ',')""
+                `$method.invoke(`$self, `$binding, `$null, `$inargs, `$null)
+
+                # update any [ref] values in original `$args
+                for (`$i = 0; `$i -lt `$args.length; `$i++) {
+                    `$elem = `$args[`$i]
+                    if (`$elem -is [ref]) {
+                        `$elem.value = `$inargs[`$i]
+                    }
+                }
+
             } catch {
 
                 # TODO: remove this redundant check
@@ -369,6 +413,7 @@ $SCRIPT:initializer = {
 
                 } else {
                     # error is from invocation target, rethrow
+                    write-verbose 'rethrow on invoke'
                     throw
                 }
             }")).GetNewClosure()
