@@ -4,6 +4,7 @@ Here you'll find examples of how to peek and poke objects using the Poke module.
 
 ### Version History
 
+* 1.1   - adds support for invoking methods with ref/out parameters ([ref])
 * 1.0.2 - readonly fields are now settable like regular fields
 * 1.0.1 - Compatibility fixes for v3 beta / .net 4.5
 * 1.0   - Initial release
