@@ -352,7 +352,7 @@ $SCRIPT:initializer = {
         # psscriptmethod ignores outputtype - maybe this will get fixed in later releases of ps?
         # ultimately it's of dubious use for methods as overloads may differ in return type.
         # of course, they must have differing parameters too as a method cannot differ _only_ by return type.
-        $definition = new-item function:$methodName -value ([scriptblock]::create("
+        $definition = new-item function:script:$methodName -value ([scriptblock]::create("
             # cache overloads in description attribute which is easily retrieved from this
             # scriptblock's attributes property when emitting memberdefinition definition
             [componentmodel.description('$overloads')]
