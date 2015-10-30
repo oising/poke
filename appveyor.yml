@@ -41,8 +41,7 @@ before_deploy:
       
       @(
           # You can add other artifacts here
-          $zipFilePath,
-          $nuGetPackagePath
+          $zipFilePath
       ) | % { 
           Write-Host "Pushing package $_ as Appveyor artifact"
           Push-AppveyorArtifact $_
