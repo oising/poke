@@ -927,7 +927,7 @@ Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -Member
 } -Force
 
 # shortcut for $o | peek | gm
-function Get-PokeMember { $input | peek | Get-Member }
+function Get-PokeMember { $args | peek | Get-Member }
 
 #
 #  Exports
