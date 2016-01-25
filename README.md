@@ -1,5 +1,7 @@
 # Poke
 
+[![Build status](https://ci.appveyor.com/api/projects/status/0gil31jtywx1c849?svg=true)](https://ci.appveyor.com/project/oising/poke)
+
 Here you'll find examples of how to peek and poke objects using the Poke module.
 
 ### Version History
