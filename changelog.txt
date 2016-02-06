@@ -5,6 +5,7 @@
 fixes: 
 - two tests were failing due to silly tests against private member counts to
   validate success;
+- "init" script module is left loaded after a module unload - added onremove to unload it
   
 enhancements:
 - now support invoking methods with out/ref parameters (poewrshell treats both as [ref])

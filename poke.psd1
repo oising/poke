@@ -24,7 +24,7 @@ Author = 'Oisin Grehan'
 CompanyName = 'MVP'
 
 # Copyright statement for this module
-Copyright = '(c) 2012 Oisin Grehan. All rights reserved.'
+Copyright = '(c) 2012-2016 Oisin Grehan. All rights reserved.'
 
 # Description of the functionality provided by this module
 Description = "A PowerShell module for working with non-public types and instances. Ideal for live debugging of complex .net applications, or even introspection against powershell itself. Think open brain surgery for .NET."
@@ -54,7 +54,7 @@ PowerShellVersion = '3.0'
 # RequiredAssemblies = @()
 
 # Script files (.ps1) that are run in the caller's environment prior to importing this module
-ScriptsToProcess = @('init.ps1')
+ScriptsToProcess = @('poke_init.ps1')
 
 # Type files (.ps1xml) to be loaded when importing this module
 # TypesToProcess = @()
@@ -66,7 +66,7 @@ FormatsToProcess = @()
 # NestedModules = @()
 
 # Functions to export from this module
-FunctionsToExport = '*'
+FunctionsToExport = @('Get-Delegate', 'Get-PokeMember', 'Invoke-FormatHelper', 'New-InstanceProxy', 'New-ObjectProxy', 'New-TypeProxy')
 
 # Cmdlets to export from this module
 CmdletsToExport = '*'
@@ -75,7 +75,7 @@ CmdletsToExport = '*'
 VariablesToExport = '*'
 
 # Aliases to export from this module
-AliasesToExport = '*'
+AliasesToExport = 'peek'
 
 # List of all modules packaged with this module
 # ModuleList = @()
@@ -84,8 +84,32 @@ AliasesToExport = '*'
 # FileList = @()
 
 # Private data to pass to the module specified in RootModule/ModuleToProcess
-# PrivateData = ''
+PrivateData = @{
 
+    PSData = @{
+
+        # Tags applied to this module. These help with module discovery in online galleries.
+        Tags = 'debugging','hack','peek','reflection'
+
+        # A URL to the license for this module.
+        # LicenseUri = ''
+
+        # A URL to the main website for this project.
+        ProjectUri = 'https://github.com/oising/poke'
+
+        # A URL to an icon representing this module.
+        # IconUri = ''
+
+        # ReleaseNotes of this module
+        ReleaseNotes = '1.1 - added support for out/ref parameters.'
+
+        # External dependent modules of this module
+        # ExternalModuleDependencies = ''
+
+    } # End of PSData hashtable
+    
+ } # End of PrivateData hashtable
+ 
 # HelpInfo URI of this module
 # HelpInfoURI = ''
 
@@ -93,4 +117,3 @@ AliasesToExport = '*'
 # DefaultCommandPrefix = ''
 
 }
-

@@ -929,6 +929,10 @@ Update-TypeData -typename Microsoft.PowerShell.Commands.MemberDefinition -Member
 # shortcut for $o | peek | gm
 function Get-PokeMember { $args | peek | Get-Member }
 
+$ExecutionContext.SessionState.Module.OnRemove = {
+    remove-module poke_init -ErrorAction SilentlyContinue
+}
+
 #
 #  Exports
 #
