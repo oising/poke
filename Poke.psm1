@@ -342,7 +342,7 @@ $SCRIPT:initializer = {
         $baseType = $baseObject.GetType()
     }
 
-    foreach ($method in @($methodInfos|sort name -unique)) {
+    foreach ($method in @($methodInfos|Sort-Object name -unique)) {
 
         $methodName = $method.name        
 
@@ -672,7 +672,7 @@ function Add-Fields {
     $psobject = $baseObject.psobject
 
     # add fields
-    foreach ($field in ($fields|limit-specialmember|sort name)) {
+    foreach ($field in ($fields|limit-specialmember|Sort-Object name)) {
         
         # clean up type string for generics and accelerated types
         $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($field.FieldType)
@@ -725,7 +725,7 @@ function Add-Properties {
     $psobject = $baseObject.psobject
 
     # add properties
-    foreach ($property in ($properties|limit-specialmember|sort name)) {
+    foreach ($property in ($properties|limit-specialmember|Sort-Object name)) {
        
         # clean up type string for generics and accelerated types
         $outputType = [Microsoft.PowerShell.ToStringCodeMethods]::type($property.PropertyType)
