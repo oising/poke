@@ -1,11 +1,18 @@
 # Poke
 
+(build CI is broken, apologies)
+
 [![Build status](https://ci.appveyor.com/api/projects/status/0gil31jtywx1c849?svg=true)](https://ci.appveyor.com/project/oising/poke)
+
+### PowerShellGallery
+
+[https://www.powershellgallery.com/packages/poke/]
 
 Here you'll find examples of how to peek and poke objects using the Poke module.
 
 ### Version History
 
+* 1.1.2 - fixes sort alias clash on *nix (thanks @fsackur)
 * 1.1   - adds support for invoking methods with ref/out parameters ([ref])
 * 1.0.2 - readonly fields are now settable like regular fields
 * 1.0.1 - Compatibility fixes for v3 beta / .net 4.5
